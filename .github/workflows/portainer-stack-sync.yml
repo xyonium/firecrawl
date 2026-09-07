@@ -48,14 +48,14 @@ jobs:
           # CE Portainer has no "re-pull image", so image updates must flow
           # through compose file diffs: new digest -> file changes -> redeploy pulls it.
           # $1 = mirror image as used in the stack, $2 = upstream ref to resolve.
+          # (mirror digest-pull verified from the host: mirror fetches upstream on
+          # cache miss. No probe here — GitHub runners cannot reach the mirror.)
           pin() {
             local digest
             digest=$(docker buildx imagetools inspect "$2" --format '{{.Manifest.Digest}}')
             sed -i -E "s#${1}(:[[:alnum:]_.-]+)?(@sha256:[[:xdigit:]]{64})?#${1}@${digest}#g" \
               docker-compose.merged.tmp.yaml
             grep -q "${1}@${digest}" docker-compose.merged.tmp.yaml
-            docker manifest inspect "${1}@${digest}" >/dev/null 2>&1 \
-              || echo "::warning::mirror digest probe failed for ${1}@${digest} — verify the mirror can serve it"
           }
           pin "jcr.savorcare.com/ghcr/firecrawl/firecrawl"          "ghcr.io/firecrawl/firecrawl:latest"
           pin "jcr.savorcare.com/ghcr/firecrawl/playwright-service" "ghcr.io/firecrawl/playwright-service:latest"
