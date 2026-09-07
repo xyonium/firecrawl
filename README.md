@@ -6,7 +6,6 @@
 |---|---|---|
 | `docker-compose.yaml` | 上游 [firecrawl/firecrawl](https://github.com/firecrawl/firecrawl) 的原样拷贝 | **只由机器人改**，手动改了也会被同步覆盖 |
 | `docker-compose.portainer.yaml` | 我们的全部自定义（镜像源、restart、traefik、reverse-proxy 网络、api 启动 patch、数据卷） | **要调整部署只改这个文件** |
-| `stack.env.example` | 环境变量模板（参考用；实际值在 Portainer stack 的 env 里配置） | 手动 |
 
 ## Portainer 配置
 
