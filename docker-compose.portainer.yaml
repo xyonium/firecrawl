@@ -1,0 +1,72 @@
+# Portainer 自定义层：与上游 docker-compose.yaml 合并使用
+# docker compose -f docker-compose.yaml -f docker-compose.portainer.yaml up -d
+services:
+  playwright-service:
+    image: jcr.savorcare.com/ghcr/firecrawl/playwright-service:latest
+    build: !reset null
+    restart: unless-stopped
+    ports:
+      - "3031:3000"
+
+  api:
+    image: jcr.savorcare.com/ghcr/firecrawl/firecrawl
+    build: !reset null
+    restart: unless-stopped
+    container_name: firecrawl
+    networks:
+      - reverse-proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.firecrawl.rule=Host(`firecrawl.savorcare.com`)"
+      - "traefik.http.routers.firecrawl.entrypoints=websecure"
+      - "traefik.http.routers.firecrawl.tls.certresolver=myresolver"
+      - "traefik.http.routers.firecrawl.tls.domains[0].main=savorcare.com"
+      - "traefik.http.routers.firecrawl.tls.domains[0].sans=*.savorcare.com"
+      - "traefik.http.routers.firecrawlhttp.rule=Host(`firecrawl.savorcare.com`)"
+      - "traefik.http.routers.firecrawlhttp.entrypoints=web"
+      - "traefik.docker.network=reverse-proxy"
+    command: >
+      sh -c "
+      sed -i 's/getModelLimits(\"gpt-4o-mini\")/getModelLimits(\"gemini-2.5-flash-lite\")/g' /app/dist/src/scraper/scrapeURL/transformers/llmExtract.js
+      && echo '✅ Patched: getModelLimits now uses gemini-2.5-flash-lite (1M input, 65K output)'
+      && node dist/src/harness.js --start-docker
+      "
+
+  redis:
+    image: jcr.savorcare.com/docker/redis:alpine
+    restart: unless-stopped
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: jcr.savorcare.com/docker/rabbitmq:3-management
+    restart: unless-stopped
+    volumes:
+      - /tmp/firecrawl/rabiitmq:/var/lib/rabbitmq
+
+  nuq-postgres:
+    image: jcr.savorcare.com/ghcr/firecrawl/nuq-postgres:latest
+    build: !reset null
+    restart: unless-stopped
+    volumes:
+      - postgres:/var/lib/postgresql/data
+
+  foundationdb:
+    image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
+
+  foundationdb-init:
+    image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
+
+networks:
+  reverse-proxy:
+    name: reverse-proxy
+    external: true
+
+volumes:
+  redis:
+  postgres:
