@@ -1,10 +1,13 @@
 name: Sync upstream compose for Portainer
 
-# Keeps the `portainer-stack` orphan branch's docker-compose.yaml in sync with
-# upstream firecrawl/firecrawl. All local customization lives in
-# docker-compose.portainer.yaml on that branch — never edit it here.
-# Scheduled workflows only run on the default branch, which is why this
-# file lives on main while committing to portainer-stack.
+# Keeps the `portainer-stack` orphan branch in sync with upstream
+# firecrawl/firecrawl:
+#   1. docker-compose.upstream.yaml  <- pristine upstream copy (bot-managed)
+#   2. docker-compose.yaml           <- pre-merged with docker-compose.portainer.yaml
+#                                       (bot-generated; Portainer deploys this directly)
+# All local customization lives in docker-compose.portainer.yaml — never edit
+# the other two by hand. Scheduled workflows only run on the default branch,
+# which is why this file lives on main while committing to portainer-stack.
 
 on:
   schedule:
@@ -29,33 +32,41 @@ jobs:
       - name: Fetch latest upstream compose
         run: |
           curl -fsSL https://raw.githubusercontent.com/firecrawl/firecrawl/main/docker-compose.yaml \
-            -o docker-compose.yaml
+            -o docker-compose.upstream.yaml
 
-      - name: Validate merged compose config
+      - name: Merge with Portainer override and validate
         run: |
-          set -e
-          docker compose -f docker-compose.yaml -f docker-compose.portainer.yaml config --quiet
+          set -euo pipefail
+          # --no-interpolate keeps ${VAR} templating for Portainer stack env
+          docker compose -f docker-compose.upstream.yaml -f docker-compose.portainer.yaml \
+            config --no-interpolate --quiet
+          docker compose -f docker-compose.upstream.yaml -f docker-compose.portainer.yaml \
+            config --no-interpolate > docker-compose.merged.tmp.yaml
           # Sentinel checks: if upstream renames/removes something our override
           # depends on, fail loudly instead of deploying a broken stack.
+          # (single tokens only — the generated file wraps long lines)
           for needle in \
             "container_name: firecrawl" \
             "jcr.savorcare.com" \
             "reverse-proxy" \
             "traefik.enable" \
-            "harness.js --start-docker"; do
-            docker compose -f docker-compose.yaml -f docker-compose.portainer.yaml config \
-              | grep -q "$needle" || {
-                echo "::error::merged config missing '$needle' — upstream changed something our override relies on"
-                exit 1
-              }
+            "harness.js" \
+            "llmExtract.js"; do
+            grep -q "$needle" docker-compose.merged.tmp.yaml || {
+              echo "::error::merged config missing '$needle' — upstream changed something our override relies on"
+              exit 1
+            }
           done
-          echo "merged config OK"
+          mv docker-compose.merged.tmp.yaml docker-compose.yaml
+          # final file must parse on its own
+          docker compose -f docker-compose.yaml config --quiet
+          echo "merged file OK"
 
       - name: Commit and push if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docker-compose.yaml
+          git add docker-compose.upstream.yaml docker-compose.yaml
           if git diff --cached --quiet; then
             echo "Upstream compose unchanged, nothing to do."
           else
