@@ -3,7 +3,8 @@ name: Sync upstream compose for Portainer
 # Keeps the `portainer-stack` orphan branch in sync with upstream
 # firecrawl/firecrawl:
 #   1. docker-compose.upstream.yaml  <- pristine upstream copy (bot-managed)
-#   2. docker-compose.yaml           <- pre-merged with docker-compose.portainer.yaml
+#   2. docker-compose.yaml           <- pre-merged with docker-compose.portainer.yaml,
+#                                       firecrawl images pinned to upstream digests
 #                                       (bot-generated; Portainer deploys this directly)
 # All local customization lives in docker-compose.portainer.yaml — never edit
 # the other two by hand. Scheduled workflows only run on the default branch,
@@ -11,7 +12,7 @@ name: Sync upstream compose for Portainer
 
 on:
   schedule:
-    - cron: "17 3 * * *" # daily 03:17 UTC
+    - cron: "42 3 5 * *" # monthly, 5th 03:42 UTC (11:42 Beijing)
   workflow_dispatch:
 
 permissions:
@@ -34,7 +35,7 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/firecrawl/firecrawl/main/docker-compose.yaml \
             -o docker-compose.upstream.yaml
 
-      - name: Merge with Portainer override and validate
+      - name: Merge, pin image digests and validate
         run: |
           set -euo pipefail
           # --no-interpolate keeps ${VAR} templating for Portainer stack env
@@ -42,6 +43,24 @@ jobs:
             config --no-interpolate --quiet
           docker compose -f docker-compose.upstream.yaml -f docker-compose.portainer.yaml \
             config --no-interpolate > docker-compose.merged.tmp.yaml
+
+          # Pin floating firecrawl images to their current upstream digest.
+          # CE Portainer has no "re-pull image", so image updates must flow
+          # through compose file diffs: new digest -> file changes -> redeploy pulls it.
+          # $1 = mirror image as used in the stack, $2 = upstream ref to resolve.
+          pin() {
+            local digest
+            digest=$(docker buildx imagetools inspect "$2" --format '{{.Manifest.Digest}}')
+            sed -i -E "s#${1}(:[[:alnum:]_.-]+)?(@sha256:[[:xdigit:]]{64})?#${1}@${digest}#g" \
+              docker-compose.merged.tmp.yaml
+            grep -q "${1}@${digest}" docker-compose.merged.tmp.yaml
+            docker manifest inspect "${1}@${digest}" >/dev/null 2>&1 \
+              || echo "::warning::mirror digest probe failed for ${1}@${digest} — verify the mirror can serve it"
+          }
+          pin "jcr.savorcare.com/ghcr/firecrawl/firecrawl"          "ghcr.io/firecrawl/firecrawl:latest"
+          pin "jcr.savorcare.com/ghcr/firecrawl/playwright-service" "ghcr.io/firecrawl/playwright-service:latest"
+          pin "jcr.savorcare.com/ghcr/firecrawl/nuq-postgres"       "ghcr.io/firecrawl/nuq-postgres:latest"
+
           # Sentinel checks: if upstream renames/removes something our override
           # depends on, fail loudly instead of deploying a broken stack.
           # (single tokens only — the generated file wraps long lines)
@@ -68,8 +87,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docker-compose.upstream.yaml docker-compose.yaml
           if git diff --cached --quiet; then
-            echo "Upstream compose unchanged, nothing to do."
+            echo "Upstream unchanged, nothing to do."
           else
-            git commit -m "sync: upstream docker-compose.yaml ($(date -u +%F))"
+            git commit -m "sync: upstream compose + image digests ($(date -u +%F))"
             git push origin portainer-stack
           fi
