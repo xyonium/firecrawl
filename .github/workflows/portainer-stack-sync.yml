@@ -1,0 +1,64 @@
+name: Sync upstream compose for Portainer
+
+# Keeps the `portainer-stack` orphan branch's docker-compose.yaml in sync with
+# upstream firecrawl/firecrawl. All local customization lives in
+# docker-compose.portainer.yaml on that branch — never edit it here.
+# Scheduled workflows only run on the default branch, which is why this
+# file lives on main while committing to portainer-stack.
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # daily 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: portainer-stack-sync
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out portainer-stack branch
+        uses: actions/checkout@v4
+        with:
+          ref: portainer-stack
+
+      - name: Fetch latest upstream compose
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/firecrawl/firecrawl/main/docker-compose.yaml \
+            -o docker-compose.yaml
+
+      - name: Validate merged compose config
+        run: |
+          set -e
+          docker compose -f docker-compose.yaml -f docker-compose.portainer.yaml config --quiet
+          # Sentinel checks: if upstream renames/removes something our override
+          # depends on, fail loudly instead of deploying a broken stack.
+          for needle in \
+            "container_name: firecrawl" \
+            "jcr.savorcare.com" \
+            "reverse-proxy" \
+            "traefik.enable" \
+            "harness.js --start-docker"; do
+            docker compose -f docker-compose.yaml -f docker-compose.portainer.yaml config \
+              | grep -q "$needle" || {
+                echo "::error::merged config missing '$needle' — upstream changed something our override relies on"
+                exit 1
+              }
+          done
+          echo "merged config OK"
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docker-compose.yaml
+          if git diff --cached --quiet; then
+            echo "Upstream compose unchanged, nothing to do."
+          else
+            git commit -m "sync: upstream docker-compose.yaml ($(date -u +%F))"
+            git push origin portainer-stack
+          fi
