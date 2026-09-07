@@ -1,219 +1,314 @@
 name: firecrawl
-
-x-common-service: &common-service
-  # NOTE: If you don't want to build the service locally,
-  # comment out the build: statement and uncomment the image: statement
-  # image: ghcr.io/firecrawl/firecrawl
-  build: apps/api
-
-  ulimits:
-    nofile:
-      soft: 65535
-      hard: 65535
-  networks:
-    - backend
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-  logging:
-    driver: "json-file"
-    options:
-      max-size: "10m"
-      max-file: "3"
-      compress: "true"
-
-x-common-env: &common-env
-  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-  REDIS_RATE_LIMIT_URL: ${REDIS_RATE_LIMIT_URL:-${REDIS_URL:-redis://redis:6379}}
-  PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
-  POSTGRES_USER: ${POSTGRES_USER:-postgres}
-  POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
-  POSTGRES_DB: ${POSTGRES_DB:-postgres}
-  POSTGRES_HOST: ${POSTGRES_HOST:-nuq-postgres}
-  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-  USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION:-false}
-  NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-8}
-  CRAWL_CONCURRENT_REQUESTS: ${CRAWL_CONCURRENT_REQUESTS:-10}
-  MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-5}
-  BROWSER_POOL_SIZE: ${BROWSER_POOL_SIZE:-5}
-  OPENAI_API_KEY: ${OPENAI_API_KEY}
-  OPENAI_BASE_URL: ${OPENAI_BASE_URL}
-  MODEL_NAME: ${MODEL_NAME}
-  MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME}
-  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
-  AUTUMN_SECRET_KEY: ${AUTUMN_SECRET_KEY}
-  SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
-  BULL_AUTH_KEY: ${BULL_AUTH_KEY}
-  TEST_API_KEY: ${TEST_API_KEY}
-  SUPABASE_ANON_TOKEN: ${SUPABASE_ANON_TOKEN}
-  SUPABASE_URL: ${SUPABASE_URL}
-  SUPABASE_SERVICE_TOKEN: ${SUPABASE_SERVICE_TOKEN}
-  SELF_HOSTED_WEBHOOK_URL: ${SELF_HOSTED_WEBHOOK_URL}
-  LOGGING_LEVEL: ${LOGGING_LEVEL}
-  PROXY_SERVER: ${PROXY_SERVER}
-  PROXY_USERNAME: ${PROXY_USERNAME}
-  PROXY_PASSWORD: ${PROXY_PASSWORD}
-  SEARXNG_ENDPOINT: ${SEARXNG_ENDPOINT}
-  SEARXNG_ENGINES: ${SEARXNG_ENGINES}
-  SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES}
-  # Set NUQ_BACKEND=fdb to run the queue on FoundationDB instead of Postgres
-  NUQ_BACKEND: ${NUQ_BACKEND}
-  FDB_CLUSTER_FILE: ${NUQ_BACKEND:+/var/fdb/fdb.cluster}
-
-services:
-  playwright-service:
-    # NOTE: If you don't want to build the service locally,
-    # comment out the build: statement and uncomment the image: statement
-    # image: ghcr.io/firecrawl/playwright-service:latest
-    build: apps/playwright-service-ts
-    environment:
-      PORT: 3000
-      PROXY_SERVER: ${PROXY_SERVER}
-      PROXY_USERNAME: ${PROXY_USERNAME}
-      PROXY_PASSWORD: ${PROXY_PASSWORD}
-      ALLOW_LOCAL_WEBHOOKS: ${ALLOW_LOCAL_WEBHOOKS}
-      BLOCK_MEDIA: ${BLOCK_MEDIA}
-      # Configure maximum concurrent pages for Playwright browser instances
-      MAX_CONCURRENT_PAGES: ${CRAWL_CONCURRENT_REQUESTS:-10}
-    networks:
-      - backend
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    # Resource limits for Docker Compose (not Swarm)
-    cpus: 2.0
-    mem_limit: 4G
-    memswap_limit: 4G
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
-    tmpfs:
-      - /tmp/.cache:noexec,nosuid,size=1g
-
-  api:
-    <<: *common-service
-    environment:
-      <<: *common-env
-      HOST: "0.0.0.0"
-      PORT: ${INTERNAL_PORT:-3002}
-      EXTRACT_WORKER_PORT: ${EXTRACT_WORKER_PORT:-3004}
-      WORKER_PORT: ${WORKER_PORT:-3005}
-      NUQ_RABBITMQ_URL: amqp://rabbitmq:5672
-      HARNESS_STARTUP_TIMEOUT_MS: ${HARNESS_STARTUP_TIMEOUT_MS:-60000}
-      ENV: local
-    depends_on:
-      redis:
-        condition: service_started
-      playwright-service:
-        condition: service_started
-      rabbitmq:
-        condition: service_healthy
-    ports:
-      - "${PORT:-3002}:${INTERNAL_PORT:-3002}"
-    volumes:
-      - fdb-cluster-file:/var/fdb:ro
-    command: node dist/src/harness.js --start-docker
-    # Resource limits for Docker Compose (not Swarm)
-    # Increase if you have more CPU cores/RAM available
-    cpus: 4.0
-    mem_limit: 8G
-    memswap_limit: 8G
-
-  redis:
-    # NOTE: If you want to use Valkey (open source) instead of Redis (source available),
-    # uncomment the Valkey statement and comment out the Redis statement.
-    # Using Valkey with Firecrawl is untested and not guaranteed to work. Use with caution.
-    image: redis:alpine
-    # image: valkey/valkey:alpine
-
-    networks:
-      - backend
-    command: redis-server --bind 0.0.0.0
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"
-        compress: "true"
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    networks:
-      - backend
-    command: rabbitmq-server
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
-      interval: 5s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"
-        compress: "true"
-
-  nuq-postgres:
-    # NOTE: If you don't want to build the image locally,
-    # comment out the build: statement and uncomment the image: statement
-    # image: ghcr.io/firecrawl/nuq-postgres:latest
-    build: apps/nuq-postgres
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-postgres}
-    networks:
-      - backend
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
-
-  # FoundationDB queue backend (experimental). Enable by setting
-  # NUQ_BACKEND=fdb; the api container reads the shared cluster file from the
-  # fdb-cluster-file volume. Replaces nuq-postgres once stable.
-  foundationdb:
-    image: foundationdb/foundationdb:7.3.63
-    environment:
-      FDB_NETWORKING_MODE: container
-      FDB_COORDINATOR_PORT: 4500
-    networks:
-      - backend
-    volumes:
-      - fdb-data:/var/fdb/data
-      - fdb-cluster-file:/var/fdb
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
-
-  # one-shot: creates the database on first boot (no-op afterwards)
-  foundationdb-init:
-    image: foundationdb/foundationdb:7.3.63
-    depends_on:
-      - foundationdb
-    entrypoint:
-      - /bin/bash
-      - -c
-      - "sleep 5 && out=$(fdbcli -C /var/fdb/fdb.cluster --exec 'configure new single ssd' 2>&1); status=$$?; printf '%s\n' \"$$out\"; if [ \"$$status\" -eq 0 ]; then exit 0; fi; printf '%s\n' \"$$out\" | grep -Eiq 'already.*configured|database.*configured|database.*already exists'"
-    volumes:
-      - fdb-cluster-file:/var/fdb
-    networks:
-      - backend
-    restart: "no"
-
 networks:
   backend:
     driver: bridge
-
+    name: firecrawl_backend
+  reverse-proxy:
+    external: true
+    name: reverse-proxy
+services:
+  api:
+    command: |
+      sh -c " sed -i 's/getModelLimits(\"gpt-4o-mini\")/getModelLimits(\"gemini-2.5-flash-lite\")/g' /app/dist/src/scraper/scrapeURL/transformers/llmExtract.js && echo '✅ Patched: getModelLimits now uses gemini-2.5-flash-lite (1M input, 65K output)' && node dist/src/harness.js --start-docker "
+    container_name: firecrawl
+    cpus: 4
+    depends_on:
+      playwright-service:
+        condition: service_started
+        required: true
+      rabbitmq:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_started
+        required: true
+    environment:
+      AUTUMN_SECRET_KEY: ${AUTUMN_SECRET_KEY}
+      BROWSER_POOL_SIZE: ${BROWSER_POOL_SIZE:-5}
+      BULL_AUTH_KEY: ${BULL_AUTH_KEY}
+      CRAWL_CONCURRENT_REQUESTS: ${CRAWL_CONCURRENT_REQUESTS:-10}
+      ENV: local
+      EXTRACT_WORKER_PORT: ${EXTRACT_WORKER_PORT:-3004}
+      FDB_CLUSTER_FILE: ${NUQ_BACKEND:+/var/fdb/fdb.cluster}
+      HARNESS_STARTUP_TIMEOUT_MS: ${HARNESS_STARTUP_TIMEOUT_MS:-60000}
+      HOST: 0.0.0.0
+      LOGGING_LEVEL: ${LOGGING_LEVEL}
+      MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-5}
+      MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME}
+      MODEL_NAME: ${MODEL_NAME}
+      NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-8}
+      NUQ_BACKEND: ${NUQ_BACKEND}
+      NUQ_RABBITMQ_URL: amqp://rabbitmq:5672
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+      PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
+      PORT: ${INTERNAL_PORT:-3002}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_HOST: ${POSTGRES_HOST:-nuq-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      PROXY_PASSWORD: ${PROXY_PASSWORD}
+      PROXY_SERVER: ${PROXY_SERVER}
+      PROXY_USERNAME: ${PROXY_USERNAME}
+      REDIS_RATE_LIMIT_URL: ${REDIS_RATE_LIMIT_URL:-${REDIS_URL:-redis://redis:6379}}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES}
+      SEARXNG_ENDPOINT: ${SEARXNG_ENDPOINT}
+      SEARXNG_ENGINES: ${SEARXNG_ENGINES}
+      SELF_HOSTED_WEBHOOK_URL: ${SELF_HOSTED_WEBHOOK_URL}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      SUPABASE_ANON_TOKEN: ${SUPABASE_ANON_TOKEN}
+      SUPABASE_SERVICE_TOKEN: ${SUPABASE_SERVICE_TOKEN}
+      SUPABASE_URL: ${SUPABASE_URL}
+      TEST_API_KEY: ${TEST_API_KEY}
+      USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION:-false}
+      WORKER_PORT: ${WORKER_PORT:-3005}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    image: jcr.savorcare.com/ghcr/firecrawl/firecrawl
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.firecrawl.rule=Host(`firecrawl.savorcare.com`)
+      - traefik.http.routers.firecrawl.entrypoints=websecure
+      - traefik.http.routers.firecrawl.tls.certresolver=myresolver
+      - traefik.http.routers.firecrawl.tls.domains[0].main=savorcare.com
+      - traefik.http.routers.firecrawl.tls.domains[0].sans=*.savorcare.com
+      - traefik.http.routers.firecrawlhttp.rule=Host(`firecrawl.savorcare.com`)
+      - traefik.http.routers.firecrawlhttp.entrypoints=web
+      - traefik.docker.network=reverse-proxy
+    logging:
+      driver: json-file
+      options:
+        compress: "true"
+        max-file: "3"
+        max-size: 10m
+    mem_limit: 8G
+    memswap_limit: 8G
+    networks:
+      backend: null
+      reverse-proxy: null
+    ports:
+      - ${PORT:-3002}:${INTERNAL_PORT:-3002}
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        hard: 65535
+        soft: 65535
+    volumes:
+      - read_only: true
+        source: fdb-cluster-file
+        target: /var/fdb
+        type: volume
+        volume: {}
+  foundationdb:
+    environment:
+      FDB_COORDINATOR_PORT: 4500
+      FDB_NETWORKING_MODE: container
+    image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
+    logging:
+      driver: json-file
+      options:
+        compress: "true"
+        max-file: "3"
+        max-size: 10m
+    networks:
+      backend: null
+    volumes:
+      - source: fdb-data
+        target: /var/fdb/data
+        type: volume
+        volume: {}
+      - source: fdb-cluster-file
+        target: /var/fdb
+        type: volume
+        volume: {}
+  foundationdb-init:
+    depends_on:
+      foundationdb:
+        condition: service_started
+        required: true
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |-
+        sleep 5 && out=$(fdbcli -C /var/fdb/fdb.cluster --exec 'configure new single ssd' 2>&1); status=$$?; printf '%s
+        ' "$$out"; if [ "$$status" -eq 0 ]; then exit 0; fi; printf '%s
+        ' "$$out" | grep -Eiq 'already.*configured|database.*configured|database.*already exists'
+    image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
+    networks:
+      backend: null
+    restart: 'no'
+    volumes:
+      - source: fdb-cluster-file
+        target: /var/fdb
+        type: volume
+        volume: {}
+  nuq-postgres:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+    image: jcr.savorcare.com/ghcr/firecrawl/nuq-postgres:latest
+    logging:
+      driver: json-file
+      options:
+        compress: "true"
+        max-file: "3"
+        max-size: 10m
+    networks:
+      backend: null
+    restart: unless-stopped
+    volumes:
+      - source: postgres
+        target: /var/lib/postgresql/data
+        type: volume
+        volume: {}
+  playwright-service:
+    cap_drop:
+      - ALL
+    cpus: 2
+    environment:
+      ALLOW_LOCAL_WEBHOOKS: ${ALLOW_LOCAL_WEBHOOKS}
+      BLOCK_MEDIA: ${BLOCK_MEDIA}
+      MAX_CONCURRENT_PAGES: ${CRAWL_CONCURRENT_REQUESTS:-10}
+      PORT: 3000
+      PROXY_PASSWORD: ${PROXY_PASSWORD}
+      PROXY_SERVER: ${PROXY_SERVER}
+      PROXY_USERNAME: ${PROXY_USERNAME}
+    image: jcr.savorcare.com/ghcr/firecrawl/playwright-service:latest
+    logging:
+      driver: json-file
+      options:
+        compress: "true"
+        max-file: "3"
+        max-size: 10m
+    mem_limit: 4G
+    memswap_limit: 4G
+    networks:
+      backend: null
+    ports:
+      - mode: ingress
+        protocol: tcp
+        published: "3031"
+        target: 3000
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp/.cache:noexec,nosuid,size=1g
+  rabbitmq:
+    command: rabbitmq-server
+    healthcheck:
+      interval: 5s
+      retries: 3
+      start_period: 5s
+      test:
+        - CMD
+        - rabbitmq-diagnostics
+        - -q
+        - check_running
+      timeout: 5s
+    image: jcr.savorcare.com/docker/rabbitmq:3-management
+    logging:
+      driver: json-file
+      options:
+        compress: "true"
+        max-file: "2"
+        max-size: 5m
+    networks:
+      backend: null
+    restart: unless-stopped
+    volumes:
+      - bind:
+          create_host_path: true
+        source: /tmp/firecrawl/rabiitmq
+        target: /var/lib/rabbitmq
+        type: bind
+  redis:
+    command: redis-server --bind 0.0.0.0
+    healthcheck:
+      interval: 5s
+      retries: 10
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      timeout: 5s
+    image: jcr.savorcare.com/docker/redis:alpine
+    logging:
+      driver: json-file
+      options:
+        compress: "true"
+        max-file: "2"
+        max-size: 5m
+    networks:
+      backend: null
+    restart: unless-stopped
+    volumes:
+      - source: redis
+        target: /data
+        type: volume
+        volume: {}
 volumes:
-  fdb-data:
   fdb-cluster-file:
+    name: firecrawl_fdb-cluster-file
+  fdb-data:
+    name: firecrawl_fdb-data
+  postgres:
+    name: firecrawl_postgres
+  redis:
+    name: firecrawl_redis
+x-common-env:
+  AUTUMN_SECRET_KEY: ${AUTUMN_SECRET_KEY}
+  BROWSER_POOL_SIZE: ${BROWSER_POOL_SIZE:-5}
+  BULL_AUTH_KEY: ${BULL_AUTH_KEY}
+  CRAWL_CONCURRENT_REQUESTS: ${CRAWL_CONCURRENT_REQUESTS:-10}
+  FDB_CLUSTER_FILE: ${NUQ_BACKEND:+/var/fdb/fdb.cluster}
+  LOGGING_LEVEL: ${LOGGING_LEVEL}
+  MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-5}
+  MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME}
+  MODEL_NAME: ${MODEL_NAME}
+  NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-8}
+  NUQ_BACKEND: ${NUQ_BACKEND}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+  PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
+  POSTGRES_DB: ${POSTGRES_DB:-postgres}
+  POSTGRES_HOST: ${POSTGRES_HOST:-nuq-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  PROXY_PASSWORD: ${PROXY_PASSWORD}
+  PROXY_SERVER: ${PROXY_SERVER}
+  PROXY_USERNAME: ${PROXY_USERNAME}
+  REDIS_RATE_LIMIT_URL: ${REDIS_RATE_LIMIT_URL:-${REDIS_URL:-redis://redis:6379}}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+  SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES}
+  SEARXNG_ENDPOINT: ${SEARXNG_ENDPOINT}
+  SEARXNG_ENGINES: ${SEARXNG_ENGINES}
+  SELF_HOSTED_WEBHOOK_URL: ${SELF_HOSTED_WEBHOOK_URL}
+  SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+  SUPABASE_ANON_TOKEN: ${SUPABASE_ANON_TOKEN}
+  SUPABASE_SERVICE_TOKEN: ${SUPABASE_SERVICE_TOKEN}
+  SUPABASE_URL: ${SUPABASE_URL}
+  TEST_API_KEY: ${TEST_API_KEY}
+  USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION:-false}
+x-common-service:
+  build: apps/api
+  extra_hosts:
+    - host.docker.internal:host-gateway
+  logging:
+    driver: json-file
+    options:
+      compress: "true"
+      max-file: "3"
+      max-size: 10m
+  networks:
+    - backend
+  ulimits:
+    nofile:
+      hard: 65535
+      soft: 65535
