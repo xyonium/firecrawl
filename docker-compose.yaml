@@ -67,7 +67,7 @@ services:
       WORKER_PORT: ${WORKER_PORT:-3005}
     extra_hosts:
       - host.docker.internal:host-gateway
-    image: jcr.savorcare.com/ghcr/firecrawl/firecrawl
+    image: jcr.savorcare.com/ghcr/firecrawl/firecrawl@sha256:1910ef022706238c7d13c0e191b9a080efcf10aab049d776ba321abd8dc512ca
     labels:
       - traefik.enable=true
       - traefik.http.routers.firecrawl.rule=Host(`firecrawl.savorcare.com`)
@@ -150,7 +150,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-    image: jcr.savorcare.com/ghcr/firecrawl/nuq-postgres:latest
+    image: jcr.savorcare.com/ghcr/firecrawl/nuq-postgres@sha256:aed86f62858f29bd971abddcdeb301c12888098d2cf5d33c1ba42b053bc460f6
     logging:
       driver: json-file
       options:
@@ -177,7 +177,7 @@ services:
       PROXY_PASSWORD: ${PROXY_PASSWORD}
       PROXY_SERVER: ${PROXY_SERVER}
       PROXY_USERNAME: ${PROXY_USERNAME}
-    image: jcr.savorcare.com/ghcr/firecrawl/playwright-service:latest
+    image: jcr.savorcare.com/ghcr/firecrawl/playwright-service@sha256:df1a393ce8bfc3801570a826a9b0dcc400ae48789adb4a0ad9d6cbf0229b059b
     logging:
       driver: json-file
       options:
