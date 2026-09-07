@@ -139,7 +139,7 @@ services:
     image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
     networks:
       backend: null
-    restart: 'no'
+    restart: "no"
     volumes:
       - source: fdb-cluster-file
         target: /var/fdb
