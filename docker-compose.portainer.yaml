@@ -62,6 +62,150 @@ services:
   foundationdb-init:
     image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
 
+  # MCP server（原 stack 270 迁入）。与 api 同栈后走内部网络直连，不再绕公网。
+  # traefik 规则保持旧路径不变：/v2/mcp 是新版原生端点；/mcp 由
+  # mcp-legacy-to-v2 中间件重写到 /v2/mcp；/sse + /messages 容器仍原生支持，直通。
+  # 标签里的 $$ 是给 compose 部署期插值的转义，部署后 traefik 看到的是 $1。
+  mcp:
+    image: jcr.savorcare.com/ghcr/firecrawl/firecrawl-mcp-server:latest
+    container_name: firecrawl-mcp
+    restart: unless-stopped
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        node -e '
+        const fs = require("fs"), path = require("path");
+        function walk(d) {
+          let r = [];
+          for (const e of fs.readdirSync(d, {withFileTypes: true})) {
+            const f = path.join(d, e.name);
+            if (e.isDirectory()) r = r.concat(walk(f));
+            else if (e.name.endsWith(".js")) r.push(f);
+          }
+          return r;
+        }
+
+        const bang = "**SearXNG !bang:** Prefix query to select category: !it (programming), !science (papers/academic), !general (default web), !news, !images. For academic or research queries, ALWAYS prefix with !science instead of adding keywords like \"research paper\" to the query. Example: \"!science continuous glucose monitoring sensor accuracy\".";
+
+        const cleanDesc = "LLM-based cleaning pass that removes residual boilerplate (cookie banners, ads, social widgets, breadcrumbs, comments) that onlyMainContent misses. Preserves headings, lists, tables, code blocks, links. Can combine with onlyMainContent. Auto-skipped (preserving original) if content exceeds model token limit. Recommended to enable for complex structured websites when speed is not critical. If the returned content is unexpectedly short or seems to be missing key content, try disabling this option and re-scraping.";
+
+        let n = 0;
+        for (const f of walk("/app/dist")) {
+          let c = fs.readFileSync(f, "utf8");
+          let modified = false;
+          let logs = [];
+
+          // 1. Insert !bang text before **Sources:** in search description
+          if (!c.includes("SearXNG") && c.includes("**Sources:**")) {
+            c = c.replace("**Sources:**", bang + "\\n\\n**Sources:**");
+            modified = true; logs.push("!bang");
+          }
+
+          // 2. Add onlyCleanContent to schema after onlyMainContent
+          if (!c.includes("onlyCleanContent")) {
+            const nc = c.replace(
+              /(onlyMainContent:\s*)(\w+)\.boolean\(\)\.optional\(\)/g,
+              (m, p, v) => p + v + ".boolean().optional(),onlyCleanContent: " + v + ".boolean().optional().describe(\"" + cleanDesc + "\")"
+            );
+            if (nc !== c) { c = nc; modified = true; logs.push("onlyCleanContent"); }
+          }
+
+          // 3. Change examples: "onlyMainContent": true → "onlyCleanContent": true
+          if (c.includes("onlyCleanContent")) {
+            const nc = c.replace(/"onlyMainContent":\s*true/g, "\"onlyCleanContent\": true");
+            if (nc !== c) { c = nc; modified = true; logs.push("example-clean"); }
+          }
+
+          // 4. Remove feedback text references (tool registration disabled by env var)
+          if (c.includes("firecrawl_search_feedback")) {
+            const before = c;
+            c = c.replace(/\*\*After the search:\*\*[^\n]*\n/g, "");
+            c = c.replace(/ Pass the top-level[^\n]*?firecrawl_search_feedback[^\n]*?results\./g, "");
+            c = c.replace(/ After using search results, call firecrawl_search_feedback[^\n]*?credit\./g, "");
+            if (c !== before) { modified = true; logs.push("feedback-text"); }
+          }
+
+          // 5. Remove cloud-only "developer" from categories enum (github/research/pdf
+          //    are pure query rewrites over our own SearXNG — verified working self-hosted)
+          if (c.includes("categories") && !c.includes("developer-removed")) {
+            const before = c;
+            c = c.replace(
+              /enum\(\[(\s*[\x27\x22]github[\x27\x22]\s*,\s*[\x27\x22]research[\x27\x22]\s*,\s*[\x27\x22]pdf[\x27\x22])\s*,\s*[\x27\x22]developer[\x27\x22]\s*\]\)/g,
+              "enum([$1]) /* developer-removed */"
+            );
+            if (c !== before) { modified = true; logs.push("developer-category"); }
+          }
+
+          // 8. Disable research tools (cloud-only)
+          if (c.includes("registerResearchTools") && !c.includes("research-disabled")) {
+            const before = c;
+            c = c.replace(/registerResearchTools\s*\([^)]*\)\s*;/g, "/* research-disabled */");
+            if (c !== before) { modified = true; logs.push("research-disable"); }
+          }
+
+          // 9. Disable monitor tools (cloud-only)
+          if (c.includes("registerMonitorTools") && !c.includes("monitor-disabled")) {
+            const before = c;
+            c = c.replace(/registerMonitorTools\s*\([^)]*\)\s*;/g, "/* monitor-disabled */");
+            if (c !== before) { modified = true; logs.push("monitor-disable"); }
+          }
+
+          // 10. Disable agent + interact tools (cloud-only)
+          {
+            const before = c;
+            c = c.replace(
+              /server\.addTool\((\s*\{\s*name:\s*[\x22\x27]firecrawl_(?:agent|agent_status|interact|interact_stop)[\x22\x27])/g,
+              "(() => {})($1"
+            );
+            if (c !== before) { modified = true; logs.push("agent-interact-disable"); }
+          }
+
+          // 11. Remove agent references from scrape/map descriptions
+          if (c.includes("firecrawl_agent")) {
+            const before = c;
+            c = c.replace(/\n\s*4\.\s*\*\*Use firecrawl_agent:\*\*[^\n]*/g, "");
+            c = c.replace(/\*\*IMPORTANT - Use map before agent:\*\*/g, "**IMPORTANT - Use map to find pages:**");
+            c = c.replace(/This is faster and cheaper than using[^.]*firecrawl_agent[^.]*\.\s*/g, "");
+            c = c.replace(/Only use the agent as a last resort after map\+scrape fails\.\s*/g, "");
+            if (c !== before) { modified = true; logs.push("agent-refs"); }
+          }
+
+          if (modified) {
+            fs.writeFileSync(f, c);
+            n++;
+            console.log("Patched [" + logs.join(",") + "]: " + f);
+          }
+        }
+        console.log("Total patched: " + n);
+        ' && exec node dist/index.js
+    expose:
+      - "3000"
+    environment:
+      FIRECRAWL_API_URL: "http://api:3002"
+      FIRECRAWL_RETRY_MAX_ATTEMPTS: "10"
+      FIRECRAWL_RETRY_INITIAL_DELAY: "500"
+      FIRECRAWL_NO_SEARCH_FEEDBACK: "true"
+      FIRECRAWL_NO_ENDPOINT_FEEDBACK: "true"
+      HTTP_STREAMABLE_SERVER: "true"
+      HOST: "0.0.0.0"
+    networks:
+      - backend
+      - reverse-proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=reverse-proxy"
+      - "traefik.http.routers.mcp-fc.rule=Host(`firecrawl.savorcare.com`) && (PathPrefix(`/v2/mcp`) || PathPrefix(`/mcp`) || PathPrefix(`/sse`) || PathPrefix(`/messages`))"
+      - "traefik.http.routers.mcp-fc.entrypoints=websecure"
+      - "traefik.http.routers.mcp-fc.tls.certresolver=myresolver"
+      - "traefik.http.routers.mcp-fc.tls.domains[0].main=savorcare.com"
+      - "traefik.http.routers.mcp-fc.tls.domains[0].sans=*.savorcare.com"
+      - "traefik.http.routers.mcp-fc.middlewares=mcp-legacy-to-v2"
+      - "traefik.http.routers.mcp-fchttp.rule=Host(`firecrawl.savorcare.com`) && (PathPrefix(`/v2/mcp`) || PathPrefix(`/mcp`) || PathPrefix(`/sse`) || PathPrefix(`/messages`))"
+      - "traefik.http.routers.mcp-fchttp.entrypoints=web"
+      - "traefik.http.routers.mcp-fchttp.middlewares=mcp-legacy-to-v2"
+      - "traefik.http.middlewares.mcp-legacy-to-v2.replacepathregex.regex=^/mcp(/.*)?$$"
+      - "traefik.http.middlewares.mcp-legacy-to-v2.replacepathregex.replacement=/v2/mcp$$1"
+
 networks:
   reverse-proxy:
     name: reverse-proxy
