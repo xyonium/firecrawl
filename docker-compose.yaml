@@ -3,6 +3,9 @@ networks:
   backend:
     driver: bridge
     name: firecrawl_backend
+  owui-mcp:
+    external: true
+    name: open-webui-nogpu_default
   reverse-proxy:
     external: true
     name: reverse-proxy
@@ -23,48 +26,49 @@ services:
         condition: service_started
         required: true
     environment:
-      AUTUMN_SECRET_KEY: ${AUTUMN_SECRET_KEY}
-      BROWSER_POOL_SIZE: ${BROWSER_POOL_SIZE:-5}
-      BULL_AUTH_KEY: ${BULL_AUTH_KEY}
-      CRAWL_CONCURRENT_REQUESTS: ${CRAWL_CONCURRENT_REQUESTS:-10}
-      ENV: local
-      EXTRACT_WORKER_PORT: ${EXTRACT_WORKER_PORT:-3004}
-      FDB_CLUSTER_FILE: ${NUQ_BACKEND:+/var/fdb/fdb.cluster}
-      HARNESS_STARTUP_TIMEOUT_MS: ${HARNESS_STARTUP_TIMEOUT_MS:-60000}
-      HOST: 0.0.0.0
-      LOGGING_LEVEL: ${LOGGING_LEVEL}
-      MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-5}
-      MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME}
-      MODEL_NAME: ${MODEL_NAME}
-      NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-8}
-      NUQ_BACKEND: ${NUQ_BACKEND}
-      NUQ_RABBITMQ_URL: amqp://rabbitmq:5672
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
-      PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
-      PORT: ${INTERNAL_PORT:-3002}
-      POSTGRES_DB: ${POSTGRES_DB:-postgres}
-      POSTGRES_HOST: ${POSTGRES_HOST:-nuq-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      PROXY_PASSWORD: ${PROXY_PASSWORD}
-      PROXY_SERVER: ${PROXY_SERVER}
-      PROXY_USERNAME: ${PROXY_USERNAME}
-      REDIS_RATE_LIMIT_URL: ${REDIS_RATE_LIMIT_URL:-${REDIS_URL:-redis://redis:6379}}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES}
-      SEARXNG_ENDPOINT: ${SEARXNG_ENDPOINT}
-      SEARXNG_ENGINES: ${SEARXNG_ENGINES}
-      SELF_HOSTED_WEBHOOK_URL: ${SELF_HOSTED_WEBHOOK_URL}
-      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
-      SUPABASE_ANON_TOKEN: ${SUPABASE_ANON_TOKEN}
-      SUPABASE_SERVICE_TOKEN: ${SUPABASE_SERVICE_TOKEN}
-      SUPABASE_URL: ${SUPABASE_URL}
-      TEST_API_KEY: ${TEST_API_KEY}
-      USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION:-false}
-      WORKER_PORT: ${WORKER_PORT:-3005}
+      - AUTUMN_SECRET_KEY=${AUTUMN_SECRET_KEY}
+      - BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE:-5}
+      - BULL_AUTH_KEY=${BULL_AUTH_KEY}
+      - CRAWL_CONCURRENT_REQUESTS=${CRAWL_CONCURRENT_REQUESTS:-10}
+      - ENV=local
+      - EXTRACT_WORKER_PORT=${EXTRACT_WORKER_PORT:-3004}
+      - FDB_CLUSTER_FILE=${NUQ_BACKEND:+/var/fdb/fdb.cluster}
+      - HARNESS_STARTUP_TIMEOUT_MS=${HARNESS_STARTUP_TIMEOUT_MS:-60000}
+      - HOST=0.0.0.0
+      - LOGGING_LEVEL=${LOGGING_LEVEL}
+      - MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS:-5}
+      - MODEL_EMBEDDING_NAME=${MODEL_EMBEDDING_NAME}
+      - MODEL_NAME=${MODEL_NAME}
+      - NUM_WORKERS_PER_QUEUE=${NUM_WORKERS_PER_QUEUE:-8}
+      - NUQ_BACKEND=${NUQ_BACKEND}
+      - NUQ_RABBITMQ_URL=amqp://rabbitmq:5672
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - PLAYWRIGHT_MICROSERVICE_URL=${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
+      - PORT=${INTERNAL_PORT:-3002}
+      - POSTGRES_DB=${POSTGRES_DB:-postgres}
+      - POSTGRES_HOST=${POSTGRES_HOST:-nuq-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+      - PROXY_SERVER=${PROXY_SERVER}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - REDIS_RATE_LIMIT_URL=${REDIS_RATE_LIMIT_URL:-${REDIS_URL:-redis://redis:6379}}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - SEARXNG_CATEGORIES=${SEARXNG_CATEGORIES}
+      - SEARXNG_ENDPOINT=${SEARXNG_ENDPOINT}
+      - SEARXNG_ENGINES=${SEARXNG_ENGINES}
+      - SELF_HOSTED_WEBHOOK_URL=${SELF_HOSTED_WEBHOOK_URL}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - SUPABASE_ANON_TOKEN=${SUPABASE_ANON_TOKEN}
+      - SUPABASE_SERVICE_TOKEN=${SUPABASE_SERVICE_TOKEN}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - TEST_API_KEY=${TEST_API_KEY}
+      - USE_DB_AUTHENTICATION=${USE_DB_AUTHENTICATION:-false}
+      - WORKER_PORT=${WORKER_PORT:-3005}
+      - RESEARCH_PROXY_URL=http://research-proxy:3100
     extra_hosts:
       - host.docker.internal:host-gateway
     image: jcr.savorcare.com/ghcr/firecrawl/firecrawl@sha256:1910ef022706238c7d13c0e191b9a080efcf10aab049d776ba321abd8dc512ca
@@ -200,32 +204,19 @@ services:
             if (c !== before) { modified = true; logs.push("feedback-text"); }
           }
 
-          // 5. Remove cloud-only "developer" from categories enum (github/research/pdf
-          //    are pure query rewrites over our own SearXNG — verified working self-hosted)
-          if (c.includes("categories") && !c.includes("developer-removed")) {
-            const before = c;
-            c = c.replace(
-              /enum\(\[(\s*[\x27\x22]github[\x27\x22]\s*,\s*[\x27\x22]research[\x27\x22]\s*,\s*[\x27\x22]pdf[\x27\x22])\s*,\s*[\x27\x22]developer[\x27\x22]\s*\]\)/g,
-              "enum([$1]) /* developer-removed */"
-            );
-            if (c !== before) { modified = true; logs.push("developer-category"); }
-          }
+          // 5. categories enum 保留全部四项：github/research/pdf 是 SearXNG 查询改写
+          //    （自托管可用），developer 由本栈 research-proxy 服务兜底。
+          //    research 工具同理（registerResearchTools 不再禁用）——均由
+          //    RESEARCH_PROXY_URL -> research-proxy 提供。
 
-          // 8. Disable research tools (cloud-only)
-          if (c.includes("registerResearchTools") && !c.includes("research-disabled")) {
-            const before = c;
-            c = c.replace(/registerResearchTools\s*\([^)]*\)\s*;/g, "/* research-disabled */");
-            if (c !== before) { modified = true; logs.push("research-disable"); }
-          }
-
-          // 9. Disable monitor tools (cloud-only)
+          // 6. Disable monitor tools (cloud-only)
           if (c.includes("registerMonitorTools") && !c.includes("monitor-disabled")) {
             const before = c;
             c = c.replace(/registerMonitorTools\s*\([^)]*\)\s*;/g, "/* monitor-disabled */");
             if (c !== before) { modified = true; logs.push("monitor-disable"); }
           }
 
-          // 10. Disable agent + interact tools (cloud-only)
+          // 7. Disable agent + interact tools (cloud-only)
           {
             const before = c;
             c = c.replace(
@@ -235,7 +226,7 @@ services:
             if (c !== before) { modified = true; logs.push("agent-interact-disable"); }
           }
 
-          // 11. Remove agent references from scrape/map descriptions
+          // 8. Remove agent references from scrape/map descriptions
           if (c.includes("firecrawl_agent")) {
             const before = c;
             c = c.replace(/\n\s*4\.\s*\*\*Use firecrawl_agent:\*\*[^\n]*/g, "");
@@ -394,6 +385,21 @@ services:
         target: /data
         type: volume
         volume: {}
+  research-proxy:
+    build:
+      context: ./research-proxy
+      dockerfile: Dockerfile
+    container_name: firecrawl-research-proxy
+    environment:
+      GITHUB_TOKENS: ${GITHUB_TOKENS:-}
+      MCPO_BASE_URL: ${MCPO_BASE_URL:-http://mcp:8000}
+      PAPER_SOURCES: ${PAPER_SOURCES:-arxiv,semantic,pubmed,openalex,crossref,europepmc,dblp,hal,pmc}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+    image: firecrawl-research-proxy:v1.0.0
+    networks:
+      backend: null
+      owui-mcp: null
+    restart: unless-stopped
 volumes:
   fdb-cluster-file:
     name: firecrawl_fdb-cluster-file

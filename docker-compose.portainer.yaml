@@ -15,6 +15,10 @@ services:
     container_name: firecrawl
     networks:
       - reverse-proxy
+    environment:
+      # research/developer 端点 + research 工具的上游（本栈 research-proxy 服务）。
+      # 设上后 api 才会挂载 /v2/search/research/* 与 /v2/search/developer 路由。
+      RESEARCH_PROXY_URL: "http://research-proxy:3100"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.firecrawl.rule=Host(`firecrawl.savorcare.com`)"
@@ -61,6 +65,25 @@ services:
 
   foundationdb-init:
     image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
+
+  # research 上游 shim（源码在本分支 research-proxy/，详见其 README）。
+  # 桥接 mcpo 的 paper-search-mcp/reach-mcp + GitHub API，实现 cloud-only 的
+  # research papers / similar / read / code search 端点。纯内部服务，不过 traefik。
+  # 更新代码须 bump image tag —— CE 重部署不带 --build，新 tag 才会触发构建。
+  research-proxy:
+    build: ./research-proxy
+    image: firecrawl-research-proxy:v1.0.0
+    container_name: firecrawl-research-proxy
+    restart: unless-stopped
+    environment:
+      MCPO_BASE_URL: ${MCPO_BASE_URL:-http://mcp:8000}
+      PAPER_SOURCES: ${PAPER_SOURCES:-arxiv,semantic,pubmed,openalex,crossref,europepmc,dblp,hal,pmc}
+      # 以下密钥在 Portainer stack env 里配，不进 git：
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      GITHUB_TOKENS: ${GITHUB_TOKENS:-}
+    networks:
+      - backend
+      - owui-mcp
 
   # MCP server（原 stack 270 迁入）。与 api 同栈后走内部网络直连，不再绕公网。
   # traefik 规则保持旧路径不变：/v2/mcp 是新版原生端点；/mcp 由
@@ -125,32 +148,19 @@ services:
             if (c !== before) { modified = true; logs.push("feedback-text"); }
           }
 
-          // 5. Remove cloud-only "developer" from categories enum (github/research/pdf
-          //    are pure query rewrites over our own SearXNG — verified working self-hosted)
-          if (c.includes("categories") && !c.includes("developer-removed")) {
-            const before = c;
-            c = c.replace(
-              /enum\(\[(\s*[\x27\x22]github[\x27\x22]\s*,\s*[\x27\x22]research[\x27\x22]\s*,\s*[\x27\x22]pdf[\x27\x22])\s*,\s*[\x27\x22]developer[\x27\x22]\s*\]\)/g,
-              "enum([$1]) /* developer-removed */"
-            );
-            if (c !== before) { modified = true; logs.push("developer-category"); }
-          }
+          // 5. categories enum 保留全部四项：github/research/pdf 是 SearXNG 查询改写
+          //    （自托管可用），developer 由本栈 research-proxy 服务兜底。
+          //    research 工具同理（registerResearchTools 不再禁用）——均由
+          //    RESEARCH_PROXY_URL -> research-proxy 提供。
 
-          // 8. Disable research tools (cloud-only)
-          if (c.includes("registerResearchTools") && !c.includes("research-disabled")) {
-            const before = c;
-            c = c.replace(/registerResearchTools\s*\([^)]*\)\s*;/g, "/* research-disabled */");
-            if (c !== before) { modified = true; logs.push("research-disable"); }
-          }
-
-          // 9. Disable monitor tools (cloud-only)
+          // 6. Disable monitor tools (cloud-only)
           if (c.includes("registerMonitorTools") && !c.includes("monitor-disabled")) {
             const before = c;
             c = c.replace(/registerMonitorTools\s*\([^)]*\)\s*;/g, "/* monitor-disabled */");
             if (c !== before) { modified = true; logs.push("monitor-disable"); }
           }
 
-          // 10. Disable agent + interact tools (cloud-only)
+          // 7. Disable agent + interact tools (cloud-only)
           {
             const before = c;
             c = c.replace(
@@ -160,7 +170,7 @@ services:
             if (c !== before) { modified = true; logs.push("agent-interact-disable"); }
           }
 
-          // 11. Remove agent references from scrape/map descriptions
+          // 8. Remove agent references from scrape/map descriptions
           if (c.includes("firecrawl_agent")) {
             const before = c;
             c = c.replace(/\n\s*4\.\s*\*\*Use firecrawl_agent:\*\*[^\n]*/g, "");
@@ -209,6 +219,10 @@ services:
 networks:
   reverse-proxy:
     name: reverse-proxy
+    external: true
+  # research-proxy 经此网访问 mcpo（paper-search-mcp / reach-mcp 网关）
+  owui-mcp:
+    name: open-webui-nogpu_default
     external: true
 
 volumes:

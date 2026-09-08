@@ -7,6 +7,18 @@
 | `docker-compose.yaml` | **预合并生成文件**：上游 compose + Portainer override 合并后的最终结果，且 firecrawl 系镜像已按 digest 钉版，Portainer 直接部署它（`${VAR}` 变量保留，仍由 Portainer 的 stack env 注入） | **只由机器人生成**，手改会被覆盖 |
 | `docker-compose.upstream.yaml` | 上游 [firecrawl/firecrawl](https://github.com/firecrawl/firecrawl) 的原样拷贝 | **只由机器人改** |
 | `docker-compose.portainer.yaml` | 我们的全部自定义（镜像源、restart、traefik、reverse-proxy 网络、api 启动 patch、数据卷） | **要调整部署只改这个文件** |
+| `research-proxy/` | research 上游 shim 源码（FastAPI）：桥接 mcpo 的 paper-search-mcp/reach-mcp + GitHub API，让 cloud-only 的 research papers / similar / read / code search 端点自托管可用。compose 里 `build: ./research-proxy` | 手改，**更新须 bump compose 里的 image tag**（CE 重部署不带 `--build`） |
+
+### research-proxy 速览
+
+- api 服务设 `RESEARCH_PROXY_URL=http://research-proxy:3100` 后才会挂载
+  `/v2/search/research/*` 与 `/v2/search/developer` 路由；MCP 的 research 工具组与
+  search 的 `developer` category 全部走它
+- 需在 Portainer stack env 配：`GITHUB_TOKENS`（逗号分隔多 token 轮询，code search
+  10 req/min/token）、`SEMANTIC_SCHOLAR_API_KEY`（可选但强烈建议，否则 S2 易 429）
+- 经 external 网络 `open-webui-nogpu_default` 访问 mcpo（`http://mcp:8000`），
+  该 stack 必须先在线
+- 细节见 `research-proxy/README.md`
 
 为什么是预合并单文件：Portainer 2.39 只有**创建** stack 时才能配 additional paths，
 已有 stack 改不了（2.45 的 "Edit git settings" 才行）。预合并后 Portainer 只需要一个 compose 文件，任何版本都行。
