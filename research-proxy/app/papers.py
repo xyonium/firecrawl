@@ -367,20 +367,50 @@ async def _read_via_reach(url: str) -> str | None:
         return None
 
 
+def _fulltext_candidates(ns: str, raw_id: str, meta: dict[str, Any] | None) -> list[str]:
+    """URLs most likely to yield actual full text, best first.
+
+    Never trust meta["url"] blindly: S2 sets it to the paper *page* on
+    semanticscholar.org (abstract + recommendations), not the full text.
+    """
+    ids = (meta or {}).get("ids") or {}
+
+    def first(key: str) -> str | None:
+        v = ids.get(key)
+        return v[0] if isinstance(v, list) and v else None
+
+    arxiv_id = raw_id if ns == "arxiv" else first("arxiv")
+    doi = raw_id if ns == "doi" else first("doi")
+    if not arxiv_id and doi:
+        m = re.match(r"^10\.48550/arxiv\.(.+)$", doi, re.IGNORECASE)
+        if m:
+            arxiv_id = m.group(1)
+    urls: list[str] = []
+    if arxiv_id:
+        base = re.sub(r"v\d+$", "", arxiv_id)
+        urls += [f"https://arxiv.org/html/{base}", f"https://arxiv.org/pdf/{base}"]
+    meta_url = (meta or {}).get("url") or ""
+    is_s2_page = "semanticscholar.org" in meta_url
+    if meta_url and not is_s2_page:
+        urls.append(meta_url)  # typically an open-access publisher PDF
+    if doi:
+        urls.append(f"https://doi.org/{doi}")
+    # an S2 paper *page* has no full text (and its recommendations section
+    # actively pollutes passage ranking) — never use it as a fallback
+    return urls
+
+
 async def read_paper(paper_id: str, query: str, k: int) -> dict[str, Any]:
     ns, raw_id = parse_paper_id(paper_id)
     meta_task = asyncio.create_task(inspect_paper(paper_id))
 
     text = await _read_via_mcpo(ns, raw_id)
+    meta = await meta_task
     if text is None:
-        meta = await meta_task
-        url = (meta or {}).get("url") or ""
-        if not url and ns == "arxiv":
-            base_id = re.sub(r"v\d+$", "", raw_id)
-            url = f"https://arxiv.org/abs/{base_id}"
-        text = await _read_via_reach(url)
-    else:
-        meta = await meta_task
+        for url in _fulltext_candidates(ns, raw_id, meta)[:3]:
+            text = await _read_via_reach(url)
+            if text:
+                break
 
     if not text:
         return {
@@ -429,11 +459,15 @@ async def similar_papers(
             data = await _s2_get(
                 f"/paper/{s2id}/citations?fields={S2_FIELDS}&limit={limit}", timeout=8.0, retry_429=True
             )
+            if data is None:
+                notes.append(f"{seed}: citations pool unavailable (S2 rate limit)")
             rows = [d.get("citingPaper") for d in (data or {}).get("data", [])]
         elif mode == "references":
             data = await _s2_get(
                 f"/paper/{s2id}/references?fields={S2_FIELDS}&limit={limit}", timeout=8.0, retry_429=True
             )
+            if data is None:
+                notes.append(f"{seed}: references pool unavailable (S2 rate limit)")
             rows = [d.get("citedPaper") for d in (data or {}).get("data", [])]
         else:
             # recommendations service has thin coverage — union it with the
@@ -445,6 +479,9 @@ async def similar_papers(
                 _s2_get(f"/paper/{s2id}/citations?fields={S2_FIELDS}&limit={half}", timeout=8.0, retry_429=True),
                 _s2_get(f"/paper/{s2id}/references?fields={S2_FIELDS}&limit={half}", timeout=8.0, retry_429=True),
             )
+            missing = [name for name, d in (("recommendations", reco), ("citations", citing), ("references", cited)) if d is None]
+            if missing:
+                notes.append(f"{seed}: {', '.join(missing)} pool unavailable (S2 rate limit)")
             rows = list((reco or {}).get("recommendedPapers", []))
             rows += [d.get("citingPaper") for d in (citing or {}).get("data", [])]
             rows += [d.get("citedPaper") for d in (cited or {}).get("data", [])]
@@ -459,7 +496,9 @@ async def similar_papers(
     results = list(pool.values())
     for h in results:
         h["score"] = round(keyword_score(f"{h['title']} {h['abstract']}", intent), 4)
-    if rerank:
+    # intent always ranks (the MCP contract says "`intent` ranks candidates");
+    # the optional rerank flag is accepted for protocol compatibility.
+    if intent.strip():
         results.sort(key=lambda h: h["score"], reverse=True)
     total_pool = len(results)
     truncated = total_pool > k
