@@ -316,7 +316,7 @@ services:
     environment:
       MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
       MINERU_BASE_URL: ${MINERU_BASE_URL:-http://gpu.savorcare.com:8800}
-    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-pdf-ocr:latest
+    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-pdf-ocr@sha256:c068abcb0ad79bb136aea60c63a1158e3db3433f77ed0c3ce6087c5eff75a353
     networks:
       backend: null
     restart: unless-stopped
