@@ -8,6 +8,7 @@
 | `docker-compose.upstream.yaml` | 上游 [firecrawl/firecrawl](https://github.com/firecrawl/firecrawl) 的原样拷贝 | **只由机器人改** |
 | `docker-compose.portainer.yaml` | 我们的全部自定义（镜像源、restart、traefik、reverse-proxy 网络、api 启动 patch、数据卷） | **要调整部署只改这个文件** |
 | `research-proxy/` | research 上游 shim 源码（FastAPI）：桥接 mcpo 的 paper-search-mcp/reach-mcp + GitHub API，让 cloud-only 的 research papers / similar / read / code search 端点自托管可用。镜像由本分支的 `research-proxy-image` workflow 构建到 ghcr 并把 digest 钉回 compose | 手改源码，推送后自动出图+钉版 |
+| `pdf-ocr/` | PDF OCR 适配器源码（FastAPI）：实现 RunPod MU serverless 契约，转发到自托管 MinerU，让扫描件/图片型 PDF 走自己的 GPU。镜像由 `pdf-ocr-image` workflow 构建+钉版 | 手改源码，推送后自动出图+钉版 |
 
 ### research-proxy 速览
 
@@ -18,6 +19,38 @@
   10 req/min/token）、`SEMANTIC_SCHOLAR_API_KEY`（可选但强烈建议，否则 S2 易 429）
 - 经共享网络 `reverse-proxy` 访问 mcpo（`http://mcpo:8000`）
 - 细节见 `research-proxy/README.md`
+
+### pdf-ocr 速览
+
+- firecrawl 的扫描件 OCR 只会说 RunPod MU 契约且 URL 硬编码 `api.runpod.ai/v2/`；
+  api 启动 sed 把它改指 `http://pdf-ocr:3200/runpod/v2/`，本服务适配到 MinerU `/file_parse`
+- 只在"需要 OCR"时被调用（扫描件/图片型 PDF，<19MB）；文本型 PDF 走容器内 Rust 提取，不经过它
+- 适配器任何失败都返回 502 → firecrawl 自动降级容器内 pdf-parse，行为安全
+- 细节见 `pdf-ocr/README.md`
+
+## 环境变量：超越上游文档的实战理解
+
+上游 `.env.example` 只说了"是什么"，以下是本栈实测出来的"到底怎么配"：
+
+| 变量 | 实战理解 |
+|---|---|
+| `PARSE_UPLOAD_REF_SECRET` | 两阶段 parse 上传（`/v2/parse/upload-url` → PUT → `/v2/parse?uploadRef=`）的 HMAC 签名密钥。**不配则 upload-url 报错，但 multipart 直传 `/v2/parse` 不需要它**。本栈 api 容器 `ENV=local`（上游 compose 默认值），解锁了内存 storage driver，无需 GCS；签名 ref 结构为 `base64(json).hmac`，含 50MB 上限与过期时间。已实测全流程可用 |
+| `PDF_RUST_EXTRACT_ENABLE` | 上游默认**不开**（stringbool）。本栈默认 `true`：用镜像内的 firecrawl-rs 原生 Rust 提取文本型 PDF，质量优于 pdf-parse 兜底 |
+| `RUNPOD_MU_API_KEY` / `RUNPOD_MU_POD_ID` | **只需非空占位值**（默认 `local`）。真正生效的是 api 启动命令里的 sed：把 dist 里硬编码的 `https://api.runpod.ai/v2/` 改指本栈 pdf-ocr；Bearer 被适配器直接忽略 |
+| `MINERU_BASE_URL` / `MINERU_BACKEND` | pdf-ocr 的上游：自托管 MinerU 地址（默认 `http://gpu.savorcare.com:8800`）与 backend（默认 `pipeline`） |
+| `PDF_MU_V2_*` | **别配**。上游 v2 是 fire-and-forget 影子实验，结果只进日志，且仍以 v1 配置为前提 |
+| `CLOUD_SERVICE` | **千万别在 MCP 上设 `true`**：虽能把 parse 工具切成 hosted 两阶段上传，但会连带开启 OAuth + SAFE_MODE，无凭据时 getClient 直接 Unauthorized，全部免 key 用法报废 |
+| `RESEARCH_PROXY_URL` | 不设则 api 根本不挂载 `/v2/search/research/*` 与 `/v2/search/developer` 路由（不是报错，是路由不存在） |
+
+其他容易误判的事实：
+
+- **categories ≠ 专用后端**：`/v2/search` 的 `github`/`research`/`pdf` category 是纯查询改写
+  （`site:github.com` / 14 个学术站点 / `filetype:pdf`），底层仍走 SearXNG；
+  只有 `developer` category 走 research-proxy
+- **PDF 管线顺序**：firecrawl-rs（Rust，文本型 PDF 零配置）→ MU OCR（pdf-ocr→MinerU，仅扫描件）
+  → pdf-parse（纯 JS 兜底，总在）。任一级失败自动降级下一级
+- **MCP 的 parse 工具**：local 模式下 `filePath` 在 **MCP 容器**文件系统上解析，客户端本地路径必 ENOENT。
+  工具描述已注入 REMOTE PARSE NOTE 引导 agent 改用 HTTP multipart `POST /v2/parse`
 
 为什么是预合并单文件：Portainer 2.39 只有**创建** stack 时才能配 additional paths，
 已有 stack 改不了（2.45 的 "Edit git settings" 才行）。预合并后 Portainer 只需要一个 compose 文件，任何版本都行。

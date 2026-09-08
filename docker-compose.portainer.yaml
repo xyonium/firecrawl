@@ -137,7 +137,7 @@ services:
           return r;
         }
 
-        const bang = "**SearXNG !bang:** Prefix query to select category: !it (programming), !science (papers/academic), !general (default web), !news, !images. For academic or research queries, ALWAYS prefix with !science instead of adding keywords like \"research paper\" to the query. Example: \"!science continuous glucose monitoring sensor accuracy\".";
+        const bang = "**SearXNG !bang:** prefix the query to pick a source category: !science (papers/academic), !it (programming), !general (default web), !news, !images. For academic or research queries ALWAYS prefix with !science instead of adding keywords like \"research paper\" to the query. Example: \"!science continuous glucose monitoring sensor accuracy\".";
 
         const cleanDesc = "LLM-based cleaning pass that removes residual boilerplate (cookie banners, ads, social widgets, breadcrumbs, comments) that onlyMainContent misses. Preserves headings, lists, tables, code blocks, links. Can combine with onlyMainContent. Auto-skipped (preserving original) if content exceeds model token limit. Recommended to enable for complex structured websites when speed is not critical. If the returned content is unexpectedly short or seems to be missing key content, try disabling this option and re-scraping.";
 
@@ -147,9 +147,12 @@ services:
           let modified = false;
           let logs = [];
 
-          // 1. Insert !bang text before **Sources:** in search description
-          if (!c.includes("SearXNG") && c.includes("**Sources:**")) {
-            c = c.replace("**Sources:**", bang + "\\n\\n**Sources:**");
+          // 1. Insert !bang guidance into the search description, right after the
+          //    operators sentence. Upstream removed the old "**Sources:**" anchor
+          //    (v3.24-ish), so anchor on "the set is non-exhaustive." instead;
+          //    idempotency guard checks the inserted marker itself.
+          if (!c.includes("**SearXNG !bang:**") && c.includes("the set is non-exhaustive.")) {
+            c = c.replace("the set is non-exhaustive.", "the set is non-exhaustive. " + bang);
             modified = true; logs.push("!bang");
           }
 
@@ -211,11 +214,15 @@ services:
 
           // 9. parse tool: this MCP is a remote deployment — filePath is resolved
           //    on the MCP container filesystem, so client-local paths always
-          //    ENOENT. Point agents at the HTTP parse endpoints instead.
+          //    ENOENT. Upstream now explains local-vs-hosted generically; what it
+          //    lacks is that THIS deployment is remote plus the concrete endpoint.
+          //    Keep the note short; no backticks or dollar-brace (would break
+          //    the template literal / compose interpolation), no apostrophes
+          //    (would break the single-quoted node -e).
           if (!c.includes("REMOTE PARSE NOTE") && c.includes("Parse one supported document into markdown")) {
             c = c.replace(
               "Parse one supported document into markdown",
-              "REMOTE PARSE NOTE: this MCP server is a remote deployment and cannot read files on the caller machine - filePath only works for files inside the MCP container. To parse a caller-local file, POST it as multipart/form-data to https://firecrawl.savorcare.com/v2/parse (field file, plus optional options JSON string), or use the two-phase /v2/parse/upload-url flow. Parse one supported document into markdown"
+              "REMOTE PARSE NOTE: this MCP server is a remote deployment; filePath is resolved on the server filesystem and caller-local paths fail with ENOENT. To parse a caller-local file, POST it as multipart/form-data to https://firecrawl.savorcare.com/v2/parse (field file, plus an optional options JSON string). Parse one supported document into markdown"
             );
             modified = true; logs.push("parse-remote-note");
           }
