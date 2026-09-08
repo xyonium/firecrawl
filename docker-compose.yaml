@@ -193,7 +193,7 @@ services:
           }
 
           // 9. parse tool: this MCP is a remote deployment — filePath is resolved
-          //    on the MCP container's filesystem, so client-local paths always
+          //    on the MCP container filesystem, so client-local paths always
           //    ENOENT. Point agents at the HTTP parse endpoints instead.
           if (!c.includes("REMOTE PARSE NOTE") && c.includes("Parse one supported document into markdown")) {
             c = c.replace(
