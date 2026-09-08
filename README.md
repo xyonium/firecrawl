@@ -16,8 +16,14 @@
   search 的 `developer` category 全部走它
 - 需在 Portainer stack env 配：`GITHUB_TOKENS`（逗号分隔多 token 轮询，code search
   10 req/min/token）、`SEMANTIC_SCHOLAR_API_KEY`（可选但强烈建议，否则 S2 易 429）
-- 经 external 网络 `open-webui-nogpu_default` 访问 mcpo（`http://mcp:8000`），
-  该 stack 必须先在线
+- 经共享网络 `reverse-proxy` 访问 mcpo（`http://mcpo:8000` 别名——裸名 `mcp` 与本栈
+  mcp 服务别名撞名）。该别名要配在 mcpo 所在 stack 的 compose 里持久化：
+  ```yaml
+  # open-webui-nogpu stack 的 mcpo 服务上：
+  networks:
+    reverse-proxy:
+      aliases: [mcpo]
+  ```
 - 细节见 `research-proxy/README.md`
 
 为什么是预合并单文件：Portainer 2.39 只有**创建** stack 时才能配 additional paths，

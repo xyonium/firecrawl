@@ -3,9 +3,6 @@ networks:
   backend:
     driver: bridge
     name: firecrawl_backend
-  owui-mcp:
-    external: true
-    name: open-webui-nogpu_default
   reverse-proxy:
     external: true
     name: reverse-proxy
@@ -392,13 +389,13 @@ services:
     container_name: firecrawl-research-proxy
     environment:
       GITHUB_TOKENS: ${GITHUB_TOKENS:-}
-      MCPO_BASE_URL: ${MCPO_BASE_URL:-http://mcp:8000}
+      MCPO_BASE_URL: ${MCPO_BASE_URL:-http://mcpo:8000}
       PAPER_SOURCES: ${PAPER_SOURCES:-arxiv,semantic,pubmed,openalex,crossref,europepmc,dblp,hal,pmc}
       SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
     image: firecrawl-research-proxy:v1.0.0
     networks:
       backend: null
-      owui-mcp: null
+      reverse-proxy: null
     restart: unless-stopped
 volumes:
   fdb-cluster-file:

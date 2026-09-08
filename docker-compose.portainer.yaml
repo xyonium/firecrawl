@@ -70,20 +70,22 @@ services:
   # 桥接 mcpo 的 paper-search-mcp/reach-mcp + GitHub API，实现 cloud-only 的
   # research papers / similar / read / code search 端点。纯内部服务，不过 traefik。
   # 更新代码须 bump image tag —— CE 重部署不带 --build，新 tag 才会触发构建。
+  # mcpo 容器在 reverse-proxy 网络上的别名是 mcpo（裸名 mcp 与 mcp 服务的
+  # 服务别名撞名）。该别名需配在 mcpo 所在 stack 的 compose 里才能持久。
   research-proxy:
     build: ./research-proxy
     image: firecrawl-research-proxy:v1.0.0
     container_name: firecrawl-research-proxy
     restart: unless-stopped
     environment:
-      MCPO_BASE_URL: ${MCPO_BASE_URL:-http://mcp:8000}
+      MCPO_BASE_URL: ${MCPO_BASE_URL:-http://mcpo:8000}
       PAPER_SOURCES: ${PAPER_SOURCES:-arxiv,semantic,pubmed,openalex,crossref,europepmc,dblp,hal,pmc}
       # 以下密钥在 Portainer stack env 里配，不进 git：
       SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
       GITHUB_TOKENS: ${GITHUB_TOKENS:-}
     networks:
       - backend
-      - owui-mcp
+      - reverse-proxy
 
   # MCP server（原 stack 270 迁入）。与 api 同栈后走内部网络直连，不再绕公网。
   # traefik 规则保持旧路径不变：/v2/mcp 是新版原生端点；/mcp 由
@@ -219,10 +221,6 @@ services:
 networks:
   reverse-proxy:
     name: reverse-proxy
-    external: true
-  # research-proxy 经此网访问 mcpo（paper-search-mcp / reach-mcp 网关）
-  owui-mcp:
-    name: open-webui-nogpu_default
     external: true
 
 volumes:

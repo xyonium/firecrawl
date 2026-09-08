@@ -20,7 +20,7 @@ import httpx
 
 from .util import chunk_text, keyword_score, parse_paper_id, rank_passages, s2_lookup_id
 
-MCPO_BASE = os.environ.get("MCPO_BASE_URL", "http://mcp:8000").rstrip("/")
+MCPO_BASE = os.environ.get("MCPO_BASE_URL", "http://mcpo:8000").rstrip("/")
 PAPER_SOURCES = [
     s.strip()
     for s in os.environ.get(
