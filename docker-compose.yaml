@@ -389,7 +389,7 @@ services:
       MCPO_BASE_URL: ${MCPO_BASE_URL:-http://mcpo:8000}
       PAPER_SOURCES: ${PAPER_SOURCES:-arxiv,semantic,pubmed,openalex,crossref,europepmc,dblp,hal,pmc}
       SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
-    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-research-proxy:latest
+    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-research-proxy@sha256:e51b0f6b81c49dbaf29847f258090442e3c96db07bc7ebd4548707d335a4e19c
     networks:
       backend: null
       reverse-proxy: null
