@@ -50,22 +50,27 @@ jobs:
           # $1 = mirror image as used in the stack, $2 = upstream ref to resolve.
           # (mirror digest-pull verified from the host: mirror fetches upstream on
           # cache miss. No probe here — GitHub runners cannot reach the mirror.)
+          # The regex is anchored at end-of-line: image names are prefixes of each
+          # other (…/firecrawl vs …/firecrawl-mcp-server), and an unanchored match
+          # on the short prefix would corrupt the longer image's line.
           pin() {
             local digest
             digest=$(docker buildx imagetools inspect "$2" --format '{{.Manifest.Digest}}')
-            sed -i -E "s#${1}(:[[:alnum:]_.-]+)?(@sha256:[[:xdigit:]]{64})?#${1}@${digest}#g" \
+            sed -i -E "s#${1}(:[[:alnum:]_.-]+)?(@sha256:[[:xdigit:]]{64})?[[:space:]]*\$#${1}@${digest}#" \
               docker-compose.merged.tmp.yaml
             grep -q "${1}@${digest}" docker-compose.merged.tmp.yaml
           }
-          pin "jcr.savorcare.com/ghcr/firecrawl/firecrawl"          "ghcr.io/firecrawl/firecrawl:latest"
-          pin "jcr.savorcare.com/ghcr/firecrawl/playwright-service" "ghcr.io/firecrawl/playwright-service:latest"
-          pin "jcr.savorcare.com/ghcr/firecrawl/nuq-postgres"       "ghcr.io/firecrawl/nuq-postgres:latest"
+          pin "jcr.savorcare.com/ghcr/firecrawl/firecrawl"            "ghcr.io/firecrawl/firecrawl:latest"
+          pin "jcr.savorcare.com/ghcr/firecrawl/playwright-service"   "ghcr.io/firecrawl/playwright-service:latest"
+          pin "jcr.savorcare.com/ghcr/firecrawl/nuq-postgres"         "ghcr.io/firecrawl/nuq-postgres:latest"
+          pin "jcr.savorcare.com/ghcr/firecrawl/firecrawl-mcp-server" "ghcr.io/firecrawl/firecrawl-mcp-server:latest"
 
           # Sentinel checks: if upstream renames/removes something our override
           # depends on, fail loudly instead of deploying a broken stack.
           # (single tokens only — the generated file wraps long lines)
           for needle in \
             "container_name: firecrawl" \
+            "container_name: firecrawl-mcp" \
             "jcr.savorcare.com" \
             "reverse-proxy" \
             "traefik.enable" \
