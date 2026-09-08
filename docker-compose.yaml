@@ -9,7 +9,7 @@ networks:
 services:
   api:
     command: |
-      sh -c " sed -i 's/getModelLimits(\"gpt-4o-mini\")/getModelLimits(\"gemini-2.5-flash-lite\")/g' /app/dist/src/scraper/scrapeURL/transformers/llmExtract.js && echo '✅ Patched: getModelLimits now uses gemini-2.5-flash-lite (1M input, 65K output)' && node dist/src/harness.js --start-docker "
+      sh -c " sed -i 's/getModelLimits(\"gpt-4o-mini\")/getModelLimits(\"gemini-2.5-flash-lite\")/g' /app/dist/src/scraper/scrapeURL/transformers/llmExtract.js && echo '✅ Patched: getModelLimits now uses gemini-2.5-flash-lite (1M input, 65K output)' && sed -i 's#https://api\.runpod\.ai/v2/#http://pdf-ocr:3200/runpod/v2/#g' /app/dist/src/scraper/scrapeURL/engines/pdf/runpodMU.js && echo '✅ Patched: RunPod MU base URL -> pdf-ocr adapter (self-hosted MinerU)' && node dist/src/harness.js --start-docker "
     container_name: firecrawl
     cpus: 4
     depends_on:
@@ -68,6 +68,8 @@ services:
       - PARSE_UPLOAD_REF_SECRET=${PARSE_UPLOAD_REF_SECRET:-}
       - PDF_RUST_EXTRACT_ENABLE=${PDF_RUST_EXTRACT_ENABLE:-true}
       - RESEARCH_PROXY_URL=http://research-proxy:3100
+      - RUNPOD_MU_API_KEY=${RUNPOD_MU_API_KEY:-local}
+      - RUNPOD_MU_POD_ID=${RUNPOD_MU_POD_ID:-local}
     extra_hosts:
       - host.docker.internal:host-gateway
     image: jcr.savorcare.com/ghcr/firecrawl/firecrawl@sha256:1910ef022706238c7d13c0e191b9a080efcf10aab049d776ba321abd8dc512ca
@@ -309,6 +311,15 @@ services:
         target: /var/lib/postgresql/data
         type: volume
         volume: {}
+  pdf-ocr:
+    container_name: firecrawl-pdf-ocr
+    environment:
+      MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
+      MINERU_BASE_URL: ${MINERU_BASE_URL:-http://gpu.savorcare.com:8800}
+    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-pdf-ocr:latest
+    networks:
+      backend: null
+    restart: unless-stopped
   playwright-service:
     cap_drop:
       - ALL

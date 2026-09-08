@@ -26,6 +26,10 @@ services:
       # PDF 走容器内原生 Rust 提取（firecrawl-rs 已在镜像内），复杂排版质量优于
       # pdf-parse 兜底；扫描件 fast 模式会明确报 OCR-required。
       PDF_RUST_EXTRACT_ENABLE: ${PDF_RUST_EXTRACT_ENABLE:-true}
+      # 扫描件 OCR 走本栈 pdf-ocr 适配器（契约=RunPod MU，后端=自托管 MinerU）。
+      # 这两个值只需非空，Bearer 被适配器忽略；URL 由下面的启动 sed 改写。
+      RUNPOD_MU_API_KEY: ${RUNPOD_MU_API_KEY:-local}
+      RUNPOD_MU_POD_ID: ${RUNPOD_MU_POD_ID:-local}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.firecrawl.rule=Host(`firecrawl.savorcare.com`)"
@@ -40,6 +44,8 @@ services:
       sh -c "
       sed -i 's/getModelLimits(\"gpt-4o-mini\")/getModelLimits(\"gemini-2.5-flash-lite\")/g' /app/dist/src/scraper/scrapeURL/transformers/llmExtract.js
       && echo '✅ Patched: getModelLimits now uses gemini-2.5-flash-lite (1M input, 65K output)'
+      && sed -i 's#https://api\.runpod\.ai/v2/#http://pdf-ocr:3200/runpod/v2/#g' /app/dist/src/scraper/scrapeURL/engines/pdf/runpodMU.js
+      && echo '✅ Patched: RunPod MU base URL -> pdf-ocr adapter (self-hosted MinerU)'
       && node dist/src/harness.js --start-docker
       "
 
@@ -72,6 +78,20 @@ services:
 
   foundationdb-init:
     image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
+
+  # PDF OCR 适配器（源码在本分支 pdf-ocr/，详见其 README）。实现 RunPod MU
+  # serverless 契约并转发到自托管 MinerU，让扫描件/图片型 PDF 走自己的 GPU。
+  # api 启动时 sed 把 dist 里硬编码的 api.runpod.ai 改指到本服务；失败一律
+  # 502，api 会降级回容器内 pdf-parse。镜像由 pdf-ocr-image workflow 云端构建钉版。
+  pdf-ocr:
+    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-pdf-ocr:latest
+    container_name: firecrawl-pdf-ocr
+    restart: unless-stopped
+    environment:
+      MINERU_BASE_URL: ${MINERU_BASE_URL:-http://gpu.savorcare.com:8800}
+      MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
+    networks:
+      - backend
 
   # research 上游 shim（源码在本分支 research-proxy/，详见其 README）。
   # 桥接 mcpo 的 paper-search-mcp/reach-mcp + GitHub API，实现 cloud-only 的
