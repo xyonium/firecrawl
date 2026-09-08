@@ -65,6 +65,8 @@ services:
       - TEST_API_KEY=${TEST_API_KEY}
       - USE_DB_AUTHENTICATION=${USE_DB_AUTHENTICATION:-false}
       - WORKER_PORT=${WORKER_PORT:-3005}
+      - PARSE_UPLOAD_REF_SECRET=${PARSE_UPLOAD_REF_SECRET:-}
+      - PDF_RUST_EXTRACT_ENABLE=${PDF_RUST_EXTRACT_ENABLE:-true}
       - RESEARCH_PROXY_URL=http://research-proxy:3100
     extra_hosts:
       - host.docker.internal:host-gateway
@@ -188,6 +190,17 @@ services:
             c = c.replace(/This is faster and cheaper than using[^.]*firecrawl_agent[^.]*\.\s*/g, "");
             c = c.replace(/Only use the agent as a last resort after map\+scrape fails\.\s*/g, "");
             if (c !== before) { modified = true; logs.push("agent-refs"); }
+          }
+
+          // 9. parse tool: this MCP is a remote deployment — filePath is resolved
+          //    on the MCP container's filesystem, so client-local paths always
+          //    ENOENT. Point agents at the HTTP parse endpoints instead.
+          if (!c.includes("REMOTE PARSE NOTE") && c.includes("Parse one supported document into markdown")) {
+            c = c.replace(
+              "Parse one supported document into markdown",
+              "REMOTE PARSE NOTE: this MCP server is a remote deployment and cannot read files on the caller machine - filePath only works for files inside the MCP container. To parse a caller-local file, POST it as multipart/form-data to https://firecrawl.savorcare.com/v2/parse (field file, plus optional options JSON string), or use the two-phase /v2/parse/upload-url flow. Parse one supported document into markdown"
+            );
+            modified = true; logs.push("parse-remote-note");
           }
 
           if (modified) {

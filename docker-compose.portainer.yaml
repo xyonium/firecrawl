@@ -19,6 +19,13 @@ services:
       # research/developer 端点 + research 工具的上游（本栈 research-proxy 服务）。
       # 设上后 api 才会挂载 /v2/search/research/* 与 /v2/search/developer 路由。
       RESEARCH_PROXY_URL: "http://research-proxy:3100"
+      # 两阶段 parse 上传（/v2/parse/upload-url → PUT → /v2/parse?uploadRef=）的
+      # ref 签名密钥。本栈 ENV=local，上传走内存 driver，无需 GCS。
+      # 值在 Portainer stack env 里配，不进 git。
+      PARSE_UPLOAD_REF_SECRET: ${PARSE_UPLOAD_REF_SECRET:-}
+      # PDF 走容器内原生 Rust 提取（firecrawl-rs 已在镜像内），复杂排版质量优于
+      # pdf-parse 兜底；扫描件 fast 模式会明确报 OCR-required。
+      PDF_RUST_EXTRACT_ENABLE: ${PDF_RUST_EXTRACT_ENABLE:-true}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.firecrawl.rule=Host(`firecrawl.savorcare.com`)"
@@ -180,6 +187,17 @@ services:
             c = c.replace(/This is faster and cheaper than using[^.]*firecrawl_agent[^.]*\.\s*/g, "");
             c = c.replace(/Only use the agent as a last resort after map\+scrape fails\.\s*/g, "");
             if (c !== before) { modified = true; logs.push("agent-refs"); }
+          }
+
+          // 9. parse tool: this MCP is a remote deployment — filePath is resolved
+          //    on the MCP container's filesystem, so client-local paths always
+          //    ENOENT. Point agents at the HTTP parse endpoints instead.
+          if (!c.includes("REMOTE PARSE NOTE") && c.includes("Parse one supported document into markdown")) {
+            c = c.replace(
+              "Parse one supported document into markdown",
+              "REMOTE PARSE NOTE: this MCP server is a remote deployment and cannot read files on the caller machine - filePath only works for files inside the MCP container. To parse a caller-local file, POST it as multipart/form-data to https://firecrawl.savorcare.com/v2/parse (field file, plus optional options JSON string), or use the two-phase /v2/parse/upload-url flow. Parse one supported document into markdown"
+            );
+            modified = true; logs.push("parse-remote-note");
           }
 
           if (modified) {
