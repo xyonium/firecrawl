@@ -65,12 +65,19 @@ jobs:
           pin "jcr.savorcare.com/ghcr/firecrawl/nuq-postgres"         "ghcr.io/firecrawl/nuq-postgres:latest"
           pin "jcr.savorcare.com/ghcr/firecrawl/firecrawl-mcp-server" "ghcr.io/firecrawl/firecrawl-mcp-server:latest"
 
+          # `config` absolutizes build contexts to the runner's checkout path —
+          # restore relative so Portainer's checkout (/data/compose/<id>/) resolves it.
+          sed -i -E 's#^(\s+)context: .*/research-proxy[[:space:]]*$#\1context: ./research-proxy#' \
+            docker-compose.merged.tmp.yaml
+
           # Sentinel checks: if upstream renames/removes something our override
           # depends on, fail loudly instead of deploying a broken stack.
           # (single tokens only — the generated file wraps long lines)
           for needle in \
             "container_name: firecrawl" \
             "container_name: firecrawl-mcp" \
+            "container_name: firecrawl-research-proxy" \
+            "RESEARCH_PROXY_URL" \
             "jcr.savorcare.com" \
             "reverse-proxy" \
             "traefik.enable" \
