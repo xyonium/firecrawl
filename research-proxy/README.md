@@ -37,8 +37,13 @@ code search 必须登录（10 req/min/token，独立桶，按 token 不按 IP）
 
 ## 部署
 
-compose 里 `build: ./research-proxy` + 版本化 image tag。**更新代码必须 bump tag**
-（如 `v1.0.0` → `v1.0.1`）：Portainer CE 重部署不带 `--build`，但新 tag 本地不存在必然触发构建。
+镜像由本分支的 `.github/workflows/research-proxy-image.yml` 构建：
+推 `research-proxy/**` 改动 → GH Actions buildx 推 `ghcr.io/xyonium/firecrawl-research-proxy`
+→ 把 digest 钉回两个 compose 文件 → Portainer 看到 compose diff 拉新镜像。
+compose 里引用走 mirror：`jcr.savorcare.com/ghcr/xyonium/firecrawl-research-proxy`。
+
+本地手动构建：先 `docker pull jcr.savorcare.com/docker/library/python:3.12-slim`
+再 `docker tag` 成 `python:3.12-slim`（Dockerfile FROM 直连 docker.io，供 GH runner 用）。
 
 ## 后续方向
 

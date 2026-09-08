@@ -69,12 +69,11 @@ services:
   # research 上游 shim（源码在本分支 research-proxy/，详见其 README）。
   # 桥接 mcpo 的 paper-search-mcp/reach-mcp + GitHub API，实现 cloud-only 的
   # research papers / similar / read / code search 端点。纯内部服务，不过 traefik。
-  # 更新代码须 bump image tag —— CE 重部署不带 --build，新 tag 才会触发构建。
-  # mcpo 容器在 reverse-proxy 网络上的别名是 mcpo（裸名 mcp 与 mcp 服务的
-  # 服务别名撞名）。该别名需配在 mcpo 所在 stack 的 compose 里才能持久。
+  # 镜像由 .github/workflows/research-proxy-image.yml 构建推 ghcr 并钉 digest 回本文件；
+  # 改代码推本分支即自动出图更新（CE 靠 compose diff 拉新镜像，无需本地 build）。
+  # mcpo 容器（paper-search-mcp/reach-mcp 网关）经 reverse-proxy 网络以名字 mcpo 访问。
   research-proxy:
-    build: ./research-proxy
-    image: firecrawl-research-proxy:v1.0.0
+    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-research-proxy:latest
     container_name: firecrawl-research-proxy
     restart: unless-stopped
     environment:
@@ -88,10 +87,11 @@ services:
       - reverse-proxy
 
   # MCP server（原 stack 270 迁入）。与 api 同栈后走内部网络直连，不再绕公网。
+  # 服务名与容器名统一为 firecrawl-mcp，避免裸名 mcp 与 mcpo 容器在共享网络上撞名。
   # traefik 规则保持旧路径不变：/v2/mcp 是新版原生端点；/mcp 由
   # mcp-legacy-to-v2 中间件重写到 /v2/mcp；/sse + /messages 容器仍原生支持，直通。
   # 标签里的 $$ 是给 compose 部署期插值的转义，部署后 traefik 看到的是 $1。
-  mcp:
+  firecrawl-mcp:
     image: jcr.savorcare.com/ghcr/firecrawl/firecrawl-mcp-server:latest
     container_name: firecrawl-mcp
     restart: unless-stopped

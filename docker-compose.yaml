@@ -103,50 +103,7 @@ services:
         target: /var/fdb
         type: volume
         volume: {}
-  foundationdb:
-    environment:
-      FDB_COORDINATOR_PORT: 4500
-      FDB_NETWORKING_MODE: container
-    image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
-    logging:
-      driver: json-file
-      options:
-        compress: "true"
-        max-file: "3"
-        max-size: 10m
-    networks:
-      backend: null
-    volumes:
-      - source: fdb-data
-        target: /var/fdb/data
-        type: volume
-        volume: {}
-      - source: fdb-cluster-file
-        target: /var/fdb
-        type: volume
-        volume: {}
-  foundationdb-init:
-    depends_on:
-      foundationdb:
-        condition: service_started
-        required: true
-    entrypoint:
-      - /bin/bash
-      - -c
-      - |-
-        sleep 5 && out=$(fdbcli -C /var/fdb/fdb.cluster --exec 'configure new single ssd' 2>&1); status=$$?; printf '%s
-        ' "$$out"; if [ "$$status" -eq 0 ]; then exit 0; fi; printf '%s
-        ' "$$out" | grep -Eiq 'already.*configured|database.*configured|database.*already exists'
-    image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
-    networks:
-      backend: null
-    restart: 'no'
-    volumes:
-      - source: fdb-cluster-file
-        target: /var/fdb
-        type: volume
-        volume: {}
-  mcp:
+  firecrawl-mcp:
     command:
       - |
         node -e '
@@ -276,6 +233,49 @@ services:
       backend: null
       reverse-proxy: null
     restart: unless-stopped
+  foundationdb:
+    environment:
+      FDB_COORDINATOR_PORT: 4500
+      FDB_NETWORKING_MODE: container
+    image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
+    logging:
+      driver: json-file
+      options:
+        compress: "true"
+        max-file: "3"
+        max-size: 10m
+    networks:
+      backend: null
+    volumes:
+      - source: fdb-data
+        target: /var/fdb/data
+        type: volume
+        volume: {}
+      - source: fdb-cluster-file
+        target: /var/fdb
+        type: volume
+        volume: {}
+  foundationdb-init:
+    depends_on:
+      foundationdb:
+        condition: service_started
+        required: true
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |-
+        sleep 5 && out=$(fdbcli -C /var/fdb/fdb.cluster --exec 'configure new single ssd' 2>&1); status=$$?; printf '%s
+        ' "$$out"; if [ "$$status" -eq 0 ]; then exit 0; fi; printf '%s
+        ' "$$out" | grep -Eiq 'already.*configured|database.*configured|database.*already exists'
+    image: jcr.savorcare.com/docker/foundationdb/foundationdb:7.3.63
+    networks:
+      backend: null
+    restart: 'no'
+    volumes:
+      - source: fdb-cluster-file
+        target: /var/fdb
+        type: volume
+        volume: {}
   nuq-postgres:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
@@ -383,16 +383,13 @@ services:
         type: volume
         volume: {}
   research-proxy:
-    build:
-      context: ./research-proxy
-      dockerfile: Dockerfile
     container_name: firecrawl-research-proxy
     environment:
       GITHUB_TOKENS: ${GITHUB_TOKENS:-}
       MCPO_BASE_URL: ${MCPO_BASE_URL:-http://mcpo:8000}
       PAPER_SOURCES: ${PAPER_SOURCES:-arxiv,semantic,pubmed,openalex,crossref,europepmc,dblp,hal,pmc}
       SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
-    image: firecrawl-research-proxy:v1.0.0
+    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-research-proxy:latest
     networks:
       backend: null
       reverse-proxy: null
