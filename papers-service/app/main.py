@@ -23,9 +23,9 @@ import os
 import re
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
-from . import readers, toolwrap
+from . import downloader, readers, toolwrap
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -66,6 +66,37 @@ async def papers_tool(tool: str, request: Request):
         if item is None:
             return JSONResponse({"detail": f"doi not found: {doi}"}, status_code=404)
         return item  # shim: data.get("result") or data —— 裸 dict 即可
+
+    if tool == "download_with_fallback":
+        source = str(body.get("source") or "")
+        paper_id = str(body.get("paper_id") or "")
+        doi = str(body.get("doi") or "")
+        title = str(body.get("title") or "")
+        if not (paper_id or doi or title):
+            return JSONResponse(
+                {"detail": "need at least one of paper_id / doi / title"}, status_code=400
+            )
+        use_scihub = bool(body.get("use_scihub", False))
+        scihub_base = str(body.get("scihub_base_url") or "").strip()
+        try:
+            data, via, errors = await asyncio.wait_for(
+                downloader.download_with_fallback(
+                    source, paper_id, doi, title, use_scihub, scihub_base
+                ),
+                timeout=110,
+            )
+        except asyncio.TimeoutError:
+            return JSONResponse({"detail": "download timed out"}, status_code=504)
+        if data is None:
+            return JSONResponse(
+                {"detail": "no PDF obtained", "attempts": errors}, status_code=404
+            )
+        fname = re.sub(r"[^A-Za-z0-9._-]+", "_", title)[:80] or "paper"
+        return Response(
+            content=data,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"', "X-Download-Via": via[:120]},
+        )
 
     m = SEARCH_RE.match(tool)
     if m:

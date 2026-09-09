@@ -57,6 +57,10 @@ def build_tools():
     v.tavily_base_url = os.environ.get("TAVILY_BASE_URL", "")
     v.apify_rotator_base_url = os.environ.get("APIFY_ROTATOR_BASE_URL", "")
     v.mcpo_api_key = os.environ.get("MCPO_API_KEY", "")
+    # downloader 的 Unpaywall 请求要求 email（匿名仅少量配额）。
+    # unpaywall_email 在 tool.py 里是 UserValves（不在 Valves），走 __dict__ 兜底注入，
+    # _unpaywall_pdf_url 用 valves.__dict__.get 读取，两侧一致。
+    v.__dict__["unpaywall_email"] = os.environ.get("UNPAYWALL_EMAIL", "")
     return t
 
 

@@ -142,6 +142,8 @@ services:
       TAVILY_BASE_URL: ${TAVILY_BASE_URL:-http://api-key-rotator:8788/tavily}
       APIFY_ROTATOR_BASE_URL: ${APIFY_ROTATOR_BASE_URL:-http://api-key-rotator:8788}
       MCPO_API_KEY: ${MCPO_API_KEY:-}
+      # download_with_fallback 的 Unpaywall 请求标识（匿名有配额限制）
+      UNPAYWALL_EMAIL: ${UNPAYWALL_EMAIL:-}
     networks:
       - backend
       - reverse-proxy

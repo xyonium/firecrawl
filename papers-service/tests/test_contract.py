@@ -20,7 +20,7 @@ os.environ["PAPER_SEARCH_TOOL_PATH"] = _TOOL
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import main, readers, toolwrap  # noqa: E402
+from app import downloader, main, readers, toolwrap  # noqa: E402
 
 client = TestClient(main.app)
 
@@ -330,6 +330,103 @@ def test_read_doaj_not_found(monkeypatch):
                         lambda *a, **k: _fake_resp(404, {"results": []}))
     r = client.post("/papers/read_doaj_paper", json={"paper_id": "10.1/nope"})
     assert r.status_code == 404
+
+
+# --- download_with_fallback --------------------------------------------------------
+
+def _dl_pdf(title_fragment: str) -> bytes:
+    return _make_pdf(title_fragment + " full text " * 30)
+
+
+def test_download_native_arxiv(monkeypatch):
+    # arxiv native 直下：downloader.requests.get 返回真 PDF → 200 + 二进制
+    body = "Attention is all you need transformer paper " * 40
+
+    def fake_get(url, *a, **k):
+        if "arxiv.org/pdf/1706.03762" in url:
+            return type("R", (), {"status_code": 200, "content": _dl_pdf("Attention is all you need"),
+                                  "url": url, "raise_for_status": lambda self: None,
+                                  "headers": {}})()
+        raise readers.requests.ConnectionError("unreachable")
+
+    monkeypatch.setattr(downloader.requests, "get", fake_get)
+    r = client.post("/papers/download_with_fallback", json={
+        "source": "arxiv", "paper_id": "1706.03762",
+        "title": "Attention Is All You Need",
+    })
+    assert r.status_code == 200
+    assert r.content.startswith(b"%PDF")
+    assert "arxiv" in r.headers.get("X-Download-Via", "")
+
+
+def test_download_gate_rejects_wrong_doc_then_404(monkeypatch):
+    # native 下载的是别的文章 → 闸拒；仓储/Unpaywall 全 mock 失败 → 404 + attempts
+    def fake_get(url, *a, **k):
+        return type("R", (), {"status_code": 200,
+                              "content": _dl_pdf("Clinical dataset appendix procedures"),
+                              "url": url, "raise_for_status": lambda self: None,
+                              "headers": {}})()
+
+    monkeypatch.setattr(downloader.requests, "get", fake_get)
+    # 仓储检索全部返回无 pdf_url 结果；unpaywall 无 OA
+    async def no_repo(repo, query):
+        return ""
+
+    async def no_url(doi):
+        return ""
+
+    monkeypatch.setattr(downloader, "_repository_search_pdf_url", no_repo)
+    monkeypatch.setattr(downloader, "_unpaywall_pdf_url", no_url)
+    r = client.post("/papers/download_with_fallback", json={
+        "source": "arxiv", "paper_id": "1706.03762",
+        "title": "Attention Is All You Need",
+    })
+    assert r.status_code == 404
+    detail = r.json()
+    assert detail["detail"] == "no PDF obtained"
+    assert any("unpaywall" in e for e in detail["attempts"])
+
+
+def test_download_unpaywall_fallback_after_gate_reject(monkeypatch):
+    # native 下错文（闸拒）→ unpaywall 给对的 PDF → 200
+    calls = []
+
+    def fake_get(url, *a, **k):
+        calls.append(url)
+        if "arxiv.org/pdf" in url:
+            return type("R", (), {"status_code": 200,
+                                  "content": _dl_pdf("Unrelated proceedings volume"),
+                                  "url": url, "raise_for_status": lambda self: None,
+                                  "headers": {}})()
+        return type("R", (), {"status_code": 200,
+                              "content": _dl_pdf("Attention is all you need transformer"),
+                              "url": url, "raise_for_status": lambda self: None,
+                              "headers": {}})()
+
+    monkeypatch.setattr(downloader.requests, "get", fake_get)
+    monkeypatch.setattr(downloader, "_repository_search_pdf_url",
+                        lambda repo, q: _no_repo(repo, q))
+
+    async def up_url(doi):
+        return "https://oa.example/right.pdf"
+
+    monkeypatch.setattr(downloader, "_unpaywall_pdf_url", up_url)
+    r = client.post("/papers/download_with_fallback", json={
+        "source": "arxiv", "paper_id": "1706.03762", "doi": "10.1/xyz",
+        "title": "Attention Is All You Need",
+    })
+    assert r.status_code == 200
+    assert r.content.startswith(b"%PDF")
+    assert "unpaywall" in r.headers.get("X-Download-Via", "")
+
+
+async def _no_repo(repo, query):  # 供上面 monkeypatch 复用（同步包装）
+    return ""
+
+
+def test_download_no_inputs_400():
+    r = client.post("/papers/download_with_fallback", json={})
+    assert r.status_code == 400
 
 
 def test_unknown_tool_404():
