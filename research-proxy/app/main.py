@@ -58,7 +58,8 @@ async def healthz() -> dict:
         "ok": True,
         "githubTokens": len(github._tokens),
         "paperSources": papers.PAPER_SOURCES,
-        "mcpo": papers.MCPO_BASE,
+        "papers": papers.PAPERS_BASE,
+        "reach": papers.REACH_BASE,
     }
 
 

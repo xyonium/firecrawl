@@ -7,7 +7,8 @@
 | `docker-compose.yaml` | **预合并生成文件**：上游 compose + Portainer override 合并后的最终结果，且 firecrawl 系镜像已按 digest 钉版，Portainer 直接部署它（`${VAR}` 变量保留，仍由 Portainer 的 stack env 注入） | **只由机器人生成**，手改会被覆盖 |
 | `docker-compose.upstream.yaml` | 上游 [firecrawl/firecrawl](https://github.com/firecrawl/firecrawl) 的原样拷贝 | **只由机器人改** |
 | `docker-compose.portainer.yaml` | 我们的全部自定义（镜像源、restart、traefik、reverse-proxy 网络、api 启动 patch、数据卷） | **要调整部署只改这个文件** |
-| `research-proxy/` | research 上游 shim 源码（FastAPI）：桥接 mcpo 的 paper-search-mcp/reach-mcp + GitHub API，让 cloud-only 的 research papers / similar / read / code search 端点自托管可用。镜像由本分支的 `research-proxy-image` workflow 构建到 ghcr 并把 digest 钉回 compose | 手改源码，推送后自动出图+钉版 |
+| `research-proxy/` | research 上游 shim 源码（FastAPI）：桥接 papers-service（/papers/*）+ reach-mcp（/reach/read_url，mcpo）+ GitHub API，让 cloud-only 的 research papers / similar / read / code search 端点自托管可用。镜像由本分支的 `research-proxy-image` workflow 构建到 ghcr 并把 digest 钉回 compose | 手改源码，推送后自动出图+钉版 |
+| `papers-service/` | paper-search-mcp 的替代（FastAPI，端口 3200）：research-proxy 的 /papers/* 上游。检索直连公开学术 API（镜像构建时打进 [paper-search](https://github.com/xyonium/paper-search) 仓库 tool.py 的全部直连适配器，含 scholar 三级链），read 轻量直连，读不了 404 由 shim 落 reach-mcp。镜像由 `papers-service-image` workflow 构建+钉版 | 手改源码，推送后自动出图+钉版；tool.py 升级后手动 workflow_dispatch |
 | `pdf-ocr/` | PDF OCR 适配器源码（FastAPI）：实现 RunPod MU serverless 契约，转发到自托管 MinerU，让扫描件/图片型 PDF 走自己的 GPU。镜像由 `pdf-ocr-image` workflow 构建+钉版 | 手改源码，推送后自动出图+钉版 |
 
 ### research-proxy 速览
@@ -17,8 +18,23 @@
   search 的 `developer` category 全部走它
 - 需在 Portainer stack env 配：`GITHUB_TOKENS`（逗号分隔多 token 轮询，code search
   10 req/min/token）、`SEMANTIC_SCHOLAR_API_KEY`（可选但强烈建议，否则 S2 易 429）
-- 经共享网络 `reverse-proxy` 访问 mcpo（`http://mcpo:8000`）
+- `/papers/*` 上游走本栈 papers-service（`PAPERS_BASE_URL` 默认
+  `http://papers-service:3200`）；`/reach/read_url` 仍走 mcpo（`REACH_BASE_URL` 默认
+  `http://mcpo:8000`，经共享网络 `reverse-proxy` 访问）
 - 细节见 `research-proxy/README.md`
+
+### papers-service 速览
+
+- paper-search-mcp 已于 2026-09 退役：research-proxy 的 `/papers/*` 上游从 mcpo 切到
+  本服务（形状完全一致，shim 只换 base URL）。mcpo 上只剩 reach-mcp 还在用
+- 检索复用 paper-search 仓库 tool.py 的 19 个直连源（构建时打进镜像，与 OWUI 工具同源
+  同版本）；read 覆盖 arxiv/semantic/pubmed/pmc/europepmc/hal/crossref/openalex/iacr，
+  其余 404 → shim 自动落 reach
+- stack env 可配（全可选）：`SEMANTIC_SCHOLAR_API_KEY` `NCBI_API_KEY` `CORE_API_KEY`
+  `IEEE_APIKEY` `ZENODO_ACCESS_TOKEN` `ZHIHUIYA_APIKEY`，以及 scholar 链用的
+  `FIRECRAWL_BASE_URL`/`TAVILY_BASE_URL`/`APIFY_ROTATOR_BASE_URL`（默认值已指向
+  mcpo/api-key-rotator，通常不用动）
+- 细节见 `papers-service/README.md`
 
 ### pdf-ocr 速览
 

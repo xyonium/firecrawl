@@ -1,10 +1,14 @@
-"""Paper backends: paper-search-mcp via mcpo, Semantic Scholar graph, arXiv API.
+"""Paper backends: papers-service (直连公开 API) + Semantic Scholar graph + arXiv API.
 
 Implements the firecrawl research-upstream paper contract:
   search  -> GET /v2/research/papers            (30s budget)
   inspect -> GET /v2/research/papers/{id}       (5s budget)
   read    -> GET /v2/research/papers/{id}?query (120s budget)
   similar -> GET /v2/research/papers/{id}/similar (10s budget)
+
+/papers/* 上游默认指向 papers-service（paper-search-mcp 的替代，源码在同分支
+papers-service/）；/reach/read_url 仍走 mcpo 的 reach-mcp。三个 base 均可独立
+配置，缺省回落 MCPO_BASE_URL 保持旧行为。
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ import httpx
 from .util import chunk_text, keyword_score, parse_paper_id, rank_passages, s2_lookup_id
 
 MCPO_BASE = os.environ.get("MCPO_BASE_URL", "http://mcpo:8000").rstrip("/")
+PAPERS_BASE = os.environ.get("PAPERS_BASE_URL", MCPO_BASE).rstrip("/")
+REACH_BASE = os.environ.get("REACH_BASE_URL", MCPO_BASE).rstrip("/")
 PAPER_SOURCES = [
     s.strip()
     for s in os.environ.get(
@@ -34,7 +40,8 @@ S2_RECO_BASE = "https://api.semanticscholar.org/recommendations/v1"
 S2_KEY = os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
 S2_FIELDS = "title,abstract,authors,year,externalIds,publicationDate,venue,openAccessPdf,url"
 
-# paper-search-mcp read tools keyed by source name.
+# papers-service /papers/read_{source}_paper 的源名集合（未覆盖的源会 404 →
+# _read_via_reach 兜底，行为与 paper-search-mcp 时代一致）。
 READ_TOOL = {
     s: f"read_{s}_paper"
     for s in (
@@ -137,7 +144,7 @@ async def _search_one(source: str, query: str, per_source: int) -> tuple[str, li
     """One source with its own deadline — a hanging source never sinks the rest."""
     try:
         r = await client().post(
-            f"{MCPO_BASE}/papers/search_{source}",
+            f"{PAPERS_BASE}/papers/search_{source}",
             json={"query": query, "max_results": per_source},
             timeout=18.0,
         )
@@ -279,10 +286,10 @@ async def _arxiv_meta(arxiv_id: str) -> dict[str, Any] | None:
 
 
 async def _crossref_by_doi(doi: str) -> dict[str, Any] | None:
-    """doi inspect fallback via paper-search-mcp's crossref lookup."""
+    """doi inspect fallback via papers-service 的 crossref 直连查询。"""
     try:
         r = await client().post(
-            f"{MCPO_BASE}/papers/get_crossref_paper_by_doi", json={"doi": doi}, timeout=4.0
+            f"{PAPERS_BASE}/papers/get_crossref_paper_by_doi", json={"doi": doi}, timeout=4.0
         )
         if r.status_code != 200:
             return None
@@ -330,18 +337,18 @@ async def inspect_paper(paper_id: str) -> dict[str, Any] | None:
 # --- read -------------------------------------------------------------------
 
 
-async def _read_via_mcpo(ns: str, raw_id: str) -> str | None:
+async def _read_via_papers(ns: str, raw_id: str) -> str | None:
     tool = READ_TOOL.get(ns)
     if not tool or not raw_id:
         return None
     try:
         r = await client().post(
-            f"{MCPO_BASE}/papers/{tool}", json={"paper_id": raw_id}, timeout=90.0
+            f"{PAPERS_BASE}/papers/{tool}", json={"paper_id": raw_id}, timeout=90.0
         )
         if r.status_code != 200:
             return None
         data = r.json()
-        # mcpo unwraps single-string tool results to a bare JSON string
+        # 兼容 mcpo 的裸字符串与 {"result": str} 两种返回
         result = data if isinstance(data, str) else data.get("result")
         if isinstance(result, str) and len(result) > 200 and "error" not in result[:80].lower():
             return result
@@ -351,12 +358,12 @@ async def _read_via_mcpo(ns: str, raw_id: str) -> str | None:
 
 
 async def _read_via_reach(url: str) -> str | None:
-    """jina-reader style fetch through reach-mcp's /read_url."""
+    """jina-reader style fetch through reach-mcp's /read_url（仍在 mcpo 上）。"""
     if not url:
         return None
     try:
         r = await client().post(
-            f"{MCPO_BASE}/reach/read_url", json={"url": url}, timeout=60.0
+            f"{REACH_BASE}/reach/read_url", json={"url": url}, timeout=60.0
         )
         if r.status_code != 200:
             return None
@@ -404,7 +411,7 @@ async def read_paper(paper_id: str, query: str, k: int) -> dict[str, Any]:
     ns, raw_id = parse_paper_id(paper_id)
     meta_task = asyncio.create_task(inspect_paper(paper_id))
 
-    text = await _read_via_mcpo(ns, raw_id)
+    text = await _read_via_papers(ns, raw_id)
     meta = await meta_task
     if text is None:
         for url in _fulltext_candidates(ns, raw_id, meta)[:3]:

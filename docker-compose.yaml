@@ -419,8 +419,28 @@ services:
       GITHUB_TOKENS: ${GITHUB_TOKENS:-}
       MCPO_BASE_URL: ${MCPO_BASE_URL:-http://mcpo:8000}
       PAPER_SOURCES: ${PAPER_SOURCES:-arxiv,semantic,pubmed,openalex,crossref,europepmc,dblp,hal,pmc}
+      PAPERS_BASE_URL: ${PAPERS_BASE_URL:-http://papers-service:3200}
+      REACH_BASE_URL: ${REACH_BASE_URL:-http://mcpo:8000}
       SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
     image: jcr.savorcare.com/ghcr/xyonium/firecrawl-research-proxy@sha256:59fa988e821bb82025100fff68cd1ae6dc0817d443e09c9b30ce7dad55a7417a
+    networks:
+      backend: null
+      reverse-proxy: null
+    restart: unless-stopped
+  papers-service:
+    container_name: firecrawl-papers-service
+    environment:
+      APIFY_ROTATOR_BASE_URL: ${APIFY_ROTATOR_BASE_URL:-http://api-key-rotator:8788}
+      CORE_API_KEY: ${CORE_API_KEY:-}
+      FIRECRAWL_BASE_URL: ${FIRECRAWL_BASE_URL:-http://mcpo:8000/firecrawl}
+      IEEE_APIKEY: ${IEEE_APIKEY:-}
+      MCPO_API_KEY: ${MCPO_API_KEY:-}
+      NCBI_API_KEY: ${NCBI_API_KEY:-}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      TAVILY_BASE_URL: ${TAVILY_BASE_URL:-http://api-key-rotator:8788/tavily}
+      ZENODO_ACCESS_TOKEN: ${ZENODO_ACCESS_TOKEN:-}
+      ZHIHUIYA_APIKEY: ${ZHIHUIYA_APIKEY:-}
+    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-papers-service:latest
     networks:
       backend: null
       reverse-proxy: null

@@ -1,16 +1,20 @@
-name: Build research-proxy image
+name: Build papers-service image
 
-# research-proxy 源码随 portainer-stack 分支走（部署单分支），所以镜像构建
+# papers-service 源码随 portainer-stack 分支走（部署单分支），所以镜像构建
 # 工作流也放这个分支（push 触发要求工作流文件存在于被推送的分支上）。
 # 构建后把新 digest 钉回两个 compose 文件——compose diff 驱动 Portainer 更新，
 # 与上游同步机器人同一思路。paths 过滤不含 compose 文件，钉版提交不会自激。
+#
+# tool.py 来自另一个仓库（xyonium/paper-search）：构建时先把 main 解析成
+# commit sha 传给 PAPER_SEARCH_REF，让 ADD 层缓存在 tool.py 更新时自然失效。
+# tool.py 单独更新不会触发本工作流——需要升级时用 workflow_dispatch 手动跑一把。
 
 on:
   push:
     branches: [portainer-stack]
     paths:
-      - "research-proxy/**"
-      - ".github/workflows/research-proxy-image.yml"
+      - "papers-service/**"
+      - ".github/workflows/papers-service-image.yml"
   workflow_dispatch:
 
 permissions:
@@ -18,7 +22,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: research-proxy-image
+  group: papers-service-image
 
 jobs:
   build:
@@ -27,6 +31,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: portainer-stack
+
+      - name: Resolve paper-search ref
+        id: psref
+        run: |
+          sha=$(git ls-remote https://github.com/xyonium/paper-search.git refs/heads/main | cut -f1)
+          test -n "$sha"
+          echo "paper-search main = $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
         with:
@@ -39,14 +51,16 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./research-proxy
+          context: ./papers-service
           push: true
+          build-args: |
+            PAPER_SEARCH_REF=${{ steps.psref.outputs.sha }}
           tags: |
-            ghcr.io/xyonium/firecrawl-research-proxy:latest
-            ghcr.io/xyonium/firecrawl-research-proxy:sha-${{ github.sha }}
+            ghcr.io/xyonium/firecrawl-papers-service:latest
+            ghcr.io/xyonium/firecrawl-papers-service:sha-${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/xyonium/firecrawl
-            org.opencontainers.image.description=firecrawl research-upstream shim (papers via mcpo, code search via GitHub)
+            org.opencontainers.image.description=paper-search-mcp replacement: /papers/* upstream for research-proxy (search via paper-search tool.py direct adapters)
             org.opencontainers.image.licenses=MIT
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -54,8 +68,8 @@ jobs:
       - name: Pin digest in compose files
         run: |
           set -euo pipefail
-          image="jcr.savorcare.com/ghcr/xyonium/firecrawl-research-proxy"
-          digest=$(docker buildx imagetools inspect "ghcr.io/xyonium/firecrawl-research-proxy:latest" --format '{{.Manifest.Digest}}')
+          image="jcr.savorcare.com/ghcr/xyonium/firecrawl-papers-service"
+          digest=$(docker buildx imagetools inspect "ghcr.io/xyonium/firecrawl-papers-service:latest" --format '{{.Manifest.Digest}}')
           echo "pinning ${image}@${digest}"
           # EOL 锚定，与其他 pin 同一理由（镜像名互为前缀时防误伤）
           for f in docker-compose.portainer.yaml docker-compose.yaml; do
@@ -71,8 +85,8 @@ jobs:
           if git diff --cached --quiet; then
             echo "digest unchanged"
           else
-            git commit -m "ci: pin research-proxy digest ($(date -u +%F) ${GITHUB_SHA:0:7})"
-            # 与 papers-service-image 并发时可能撞 push：先 rebase 再推
+            git commit -m "ci: pin papers-service digest ($(date -u +%F) ${GITHUB_SHA:0:7})"
+            # 与 research-proxy-image 并发时可能撞 push：先 rebase 再推
             git pull --rebase origin portainer-stack
             git push origin portainer-stack
           fi
