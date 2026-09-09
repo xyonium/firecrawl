@@ -443,7 +443,7 @@ services:
       TAVILY_BASE_URL: ${TAVILY_BASE_URL:-http://api-key-rotator:8788/tavily}
       ZENODO_ACCESS_TOKEN: ${ZENODO_ACCESS_TOKEN:-}
       ZHIHUIYA_APIKEY: ${ZHIHUIYA_APIKEY:-}
-    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-papers-service@sha256:0e312d3918769441da97709f084affb7f153bb5ba72eaf6b150ee8b813faa619
+    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-papers-service@sha256:1647ead84af408e673f00e1d5c38d216074865132163e695518d201c5f0fce20
     networks:
       backend: null
       owui: null
