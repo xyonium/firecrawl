@@ -137,7 +137,7 @@ services:
       ZENODO_ACCESS_TOKEN: ${ZENODO_ACCESS_TOKEN:-}
       ZHIHUIYA_APIKEY: ${ZHIHUIYA_APIKEY:-}
       # scholar 链 + dblp Anubis 兜底用的 firecrawl 仍走 mcpo（其 firecrawl 服务
-      # 指向 api-key-rotator → 官方云）；tavily/apify 走 rotator：
+      # 指向 api-key-rotator → 官方云）；tavily/apify 走 rotator（在 owui 网络上）：
       FIRECRAWL_BASE_URL: ${FIRECRAWL_BASE_URL:-http://mcpo:8000/firecrawl}
       TAVILY_BASE_URL: ${TAVILY_BASE_URL:-http://api-key-rotator:8788/tavily}
       APIFY_ROTATOR_BASE_URL: ${APIFY_ROTATOR_BASE_URL:-http://api-key-rotator:8788}
@@ -145,6 +145,7 @@ services:
     networks:
       - backend
       - reverse-proxy
+      - owui  # api-key-rotator 所在网络（scholar 链 tier2/3 与 OWUI tool 同路）
 
   # MCP server（原 stack 270 迁入）。与 api 同栈后走内部网络直连，不再绕公网。
   # 服务名与容器名统一为 firecrawl-mcp，避免裸名 mcp 与 mcpo 容器在共享网络上撞名。
@@ -299,6 +300,9 @@ services:
 networks:
   reverse-proxy:
     name: reverse-proxy
+    external: true
+  owui:
+    name: open-webui-nogpu_default
     external: true
 
 volumes:

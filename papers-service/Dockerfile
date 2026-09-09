@@ -12,7 +12,8 @@ ARG PAPER_SEARCH_REF=main
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-ADD https://raw.githubusercontent.com/xyonium/paper-search/${PAPER_SEARCH_REF}/tool.py /srv/vendor/tool.py
+# ADD 远程文件默认 0600 root —— 容器以 nobody 跑，必须显式 --chmod 0644。
+ADD --chmod=0644 https://raw.githubusercontent.com/xyonium/paper-search/${PAPER_SEARCH_REF}/tool.py /srv/vendor/tool.py
 COPY app ./app
 
 USER nobody
