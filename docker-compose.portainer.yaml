@@ -125,7 +125,7 @@ services:
   # 镜像由 .github/workflows/papers-service-image.yml 构建推 ghcr 并钉 digest 回本文件；
   # tool.py 升级后手动 workflow_dispatch 一把即出新镜像。
   papers-service:
-    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-papers-service@sha256:bba8443f1a062a48ada20c3d1ca2b426433e6456c67ce94e4912f3fda63eaddd
+    image: jcr.savorcare.com/ghcr/xyonium/firecrawl-papers-service@sha256:f66f73e6c5164ba8efd23c9c1e7ddcb3bd42bedb260bd437746ffc3b0b411c8d
     container_name: firecrawl-papers-service
     restart: unless-stopped
     environment:
