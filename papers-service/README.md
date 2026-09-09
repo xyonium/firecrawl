@@ -11,6 +11,7 @@
 | `POST /papers/search_{source}` | `{"query", "max_results"}` | `{"papers": [...]}` |
 | `POST /papers/get_crossref_paper_by_doi` | `{"doi"}` | paper dict（裸） |
 | `POST /papers/read_{source}_paper` | `{"paper_id"}` | `{"result": "全文文本"}` |
+| `POST /papers/download_with_fallback` | `{"source", "paper_id", "doi", "title", "use_scihub", "scihub_base_url"}` | PDF 字节（`X-Download-Via` 标来源）；失败 404+`attempts` |
 | `GET /healthz` | — | 源清单 + tool.py 版本 |
 
 item 形状（research-proxy `_paperhit_from_mcp` 消费的就是这些键）：
@@ -37,13 +38,28 @@ OWUI 侧和本服务行为天然一致。
 ## read：本服务自带的轻量直连实现
 
 `read_{source}_paper` 覆盖：arxiv / semantic / pubmed / pmc / europepmc / hal /
-crossref / openalex / iacr（PDF→pymupdf、efetch、fullTextXML、元数据级 markdown 等，
-见 `app/readers.py`）。
+iacr（PDF→pymupdf、efetch、fullTextXML）+ biorxiv（**全文级**：details API +
+`{doi}.full.pdf` 直链，拿不到退元数据）+ medrxiv / doaj / crossref / openalex
+（元数据级 markdown，见 `app/readers.py`）。
 
 **读不了的源或论文一律 404** → research-proxy 自动落 `reach/read_url`
 （jina 风格抓取，reach-mcp 仍在 mcpo 上，**不**随 paper-search-mcp 退役）。
-因此 biorxiv/medrxiv/zenodo/openaire/dblp 等源的行为与退役前一致——本来
-paper-search-mcp 对这些源也只有元数据级 read，实际全文都是 reach 出的。
+
+## download_with_fallback：OA 下载链（OWUI tool 路径 2 的上游）
+
+照搬 paper-search-mcp `download_with_fallback` 的设计（源码参读其 0.1.4 安装包），
+paper-search-mcp 退役后承接 `download_paper_to_knowledge` 的 OA 兜底链：
+
+1. **source-native 直下**：arxiv / iacr / biorxiv 直链
+2. **OA 仓储**：openaire → core → europepmc → pmc（按 DOI/标题搜，复用 toolwrap
+   里 tool.py 的直连检索适配器取 pdf_url）
+3. **Unpaywall**：`best_oa_location` → `oa_locations`（需 `UNPAYWALL_EMAIL`）
+4. **Sci-Hub**（可选）：embed/iframe 解析，仅当请求体 `use_scihub=true` 且带
+   `scihub_base_url`
+
+每个下载点过**标题身份闸**（全文 token 覆盖率 ≥60% 才收；论文集含目标文即放行；
+扫描版提取失败不拦）——不匹配自动落下一级。响应是 PDF 字节 + `X-Download-Via`
+头（`native:arxiv` / `repository:unpaywall` / `scihub`…），调用方直接上传，无共享卷。
 
 ## 环境变量
 
@@ -57,6 +73,7 @@ paper-search-mcp 对这些源也只有元数据级 read，实际全文都是 rea
 | `TAVILY_BASE_URL` | scholar 链 tier2 + tavily 源，如 `http://api-key-rotator:8788/tavily` |
 | `APIFY_ROTATOR_BASE_URL` | scholar 链 tier3，如 `http://api-key-rotator:8788` |
 | `MCPO_API_KEY` | mcpo 的 `--api-key`（firecrawl 走 mcpo 时需要） |
+| `UNPAYWALL_EMAIL` | download_with_fallback 的 Unpaywall 请求标识（匿名有配额限制） |
 | `PAPER_SEARCH_TOOL_PATH` | 本地开发时覆盖 tool.py 路径（默认 `/srv/vendor/tool.py`） |
 
 ## 构建与部署
