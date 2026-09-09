@@ -240,6 +240,98 @@ def test_read_fetch_failure_404(monkeypatch):
     assert r.status_code == 404
 
 
+# --- read: biorxiv / medrxiv / doaj ----------------------------------------------
+
+
+def test_read_biorxiv_pdf(monkeypatch):
+    details = {"collection": [{
+        "doi": "10.1101/2023.11.08.566228",
+        "title": "Optogenetic silencing study",
+        "authors": "Doe; Roe",
+        "date": "2023-11-10",
+        "abstract": "We optogenetically silence.",
+    }]}
+    body = "biorxiv full text " * 20
+
+    def fake_get(url, *a, **k):
+        if "api.biorxiv.org" in url:
+            return _fake_resp(200, details)
+        return type("R", (), {
+            "status_code": 200,
+            "content": _make_pdf(body),
+            "raise_for_status": lambda self: None,
+        })()
+
+    monkeypatch.setattr(readers.requests, "get", fake_get)
+    r = client.post("/papers/read_biorxiv_paper", json={"paper_id": "10.1101/2023.11.08.566228"})
+    assert r.status_code == 200
+    assert "biorxiv full text" in r.json()["result"]
+
+
+def test_read_biorxiv_metadata_fallback(monkeypatch):
+    details = {"collection": [{
+        "doi": "10.1101/2023.11.08.566228", "title": "T", "authors": "A",
+        "date": "2023-11-10", "abstract": "An abstract long enough to pass the threshold, " * 4,
+    }]}
+
+    def fake_get(url, *a, **k):
+        if "api.biorxiv.org" in url:
+            return _fake_resp(200, details)
+        return type("R", (), {"status_code": 403, "content": b"",
+                              "raise_for_status": lambda self: None})()
+
+    monkeypatch.setattr(readers.requests, "get", fake_get)
+    r = client.post("/papers/read_biorxiv_paper", json={"paper_id": "10.1101/2023.11.08.566228"})
+    assert r.status_code == 200
+    assert "An abstract" in r.json()["result"]
+
+
+def test_read_biorxiv_bad_id_404():
+    r = client.post("/papers/read_biorxiv_paper", json={"paper_id": "2401.00001"})
+    assert r.status_code == 404
+
+
+def test_read_medrxiv_metadata(monkeypatch):
+    details = {"collection": [{
+        "doi": "10.1101/2024.03.03.24303581", "title": "Diffusion study",
+        "authors": "X; Y", "date": "2024-03-03",
+        "abstract": "We study diffusion time dependence in appa. " * 3,
+    }]}
+    monkeypatch.setattr(readers.requests, "get",
+                        lambda *a, **k: _fake_resp(200, details))
+    r = client.post("/papers/read_medrxiv_paper", json={"paper_id": "10.1101/2024.03.03.24303581"})
+    assert r.status_code == 200
+    res = r.json()["result"]
+    assert "Diffusion study" in res and "medrxiv" in res  # 落地页链接含域名
+
+
+def test_read_doaj_by_doi(monkeypatch):
+    payload = {"results": [{"bibjson": {
+        "title": "Non-Enzymatic Glucose Sensing",
+        "author": [{"name": "Wang"}],
+        "year": "2016",
+        "abstract": "Carbon quantum dots for glucose sensing. " * 3,
+        "identifier": [{"type": "doi", "id": "10.3390/s16101720"}],
+        "link": [{"type": "fulltext", "url": "http://www.mdpi.com/1424-8220/16/10/1720"}],
+        "journal": {"title": "Sensors", "volume": "16", "number": "10"},
+    }}]}
+    monkeypatch.setattr(readers.requests, "get",
+                        lambda *a, **k: _fake_resp(200, payload))
+    r = client.post("/papers/read_doaj_paper", json={"paper_id": "10.3390/s16101720"})
+    assert r.status_code == 200
+    res = r.json()["result"]
+    assert "Non-Enzymatic Glucose Sensing" in res
+    assert "10.3390/s16101720" in res
+    assert "Sensors" in res
+
+
+def test_read_doaj_not_found(monkeypatch):
+    monkeypatch.setattr(readers.requests, "get",
+                        lambda *a, **k: _fake_resp(404, {"results": []}))
+    r = client.post("/papers/read_doaj_paper", json={"paper_id": "10.1/nope"})
+    assert r.status_code == 404
+
+
 def test_unknown_tool_404():
     r = client.post("/papers/download_arxiv", json={"paper_id": "x"})
     assert r.status_code == 404

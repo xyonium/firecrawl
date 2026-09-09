@@ -6,6 +6,8 @@
   semantic         S2 openAccessPdf → PDF；无 OA 时退化为 著录+abstract
   pubmed           efetch abstract（纯文本）
   pmc/europepmc    Europe PMC fullTextXML（仅 PMC id）→ 去标签
+  biorxiv          details API + {doi}.full.pdf 直链（全文级；拿不到落元数据）
+  medrxiv/doaj     元数据级 markdown（medrxiv 的 PDF CDN 被 Cloudflare 挡直链）
   crossref/openalex 元数据级 markdown（著录 + abstract）
 """
 
@@ -247,6 +249,90 @@ async def read_openalex(pid: str) -> str | None:
     return await anyio.to_thread.run_sync(_f)
 
 
+# biorxiv/medrxiv：Cold Spring Harbor 预印本，details API（按日期区间查 DOI）+
+# {doi}.full.pdf 直链。biorxiv 直链实测可下（PDF 全文级）；medrxiv 的 CDN 挂
+# Cloudflare 且对无浏览器 UA 的 GET 返回 403 挑战页，直链不可靠 → 元数据级。
+def _preprint_meta(pid: str, host: str, api: str) -> str | None:
+    pid = _strip_known_prefix(pid)
+    m = re.match(r"^10\.1101/[\w.\-]+$", pid)
+    if not m:
+        return None
+    r = requests.get(f"{api}/{pid}", timeout=20, headers=UA)
+    if r.status_code != 200:
+        return None
+    try:
+        d = (r.json().get("collection") or [None])[0]
+    except ValueError:
+        return None
+    if not d or not (d.get("title") or "").strip():
+        return None
+    text = (
+        f"# {d['title']}\n\n"
+        f"作者: {d.get('authors') or ''}\n"
+        f"日期: {d.get('date') or ''}\nDOI: {d.get('doi') or pid}\n"
+        f"链接: https://{host}/content/{d.get('doi') or pid}v1\n\n"
+        f"{d.get('abstract') or ''}"
+    ).strip()
+    return text if len(text) > 100 else None
+
+
+async def read_biorxiv(pid: str) -> str | None:
+    # 先试元数据；拿到 DOI 后下 full.pdf（实测 200/真 PDF）
+    pid0 = _strip_known_prefix(pid)
+    if re.match(r"^10\.1101/[\w.\-]+$", pid0):
+        meta = await anyio.to_thread.run_sync(
+            _preprint_meta, pid, "www.biorxiv.org", "https://api.biorxiv.org/details/biorxiv"
+        )
+        doi = (re.search(r"(10\.1101/[\w.\-]+)", meta or "") or [None, ""])[1]
+        if meta and doi:
+            text = await anyio.to_thread.run_sync(
+                _fetch_pdf, f"https://www.biorxiv.org/content/{doi}.full.pdf"
+            )
+            if text:
+                return text
+        return meta
+    return None
+
+
+async def read_medrxiv(pid: str) -> str | None:
+    return await anyio.to_thread.run_sync(
+        _preprint_meta, pid, "www.medrxiv.org", "https://api.medrxiv.org/details/medrxiv"
+    )
+
+
+async def read_doaj(pid: str) -> str | None:
+    pid = _strip_known_prefix(pid)
+
+    def _f():
+        # DOAJ 的 paper_id 是 DOI 或内部 uuid；DOI 直接查，uuid 走 articles 端点
+        if re.match(r"^10\.\d{4,9}/", pid):
+            r = requests.get(f"https://doaj.org/api/search/articles/{pid}", timeout=20, headers=UA)
+        else:
+            r = requests.get(f"https://doaj.org/api/articles/{pid}", timeout=20, headers=UA)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        b = ((data.get("results") or [{}])[0].get("bibjson") if "results" in data else data.get("bibjson")) or {}
+        title = (b.get("title") or "").strip()
+        if not title:
+            return None
+        doi = next((i.get("id", "") for i in (b.get("identifier") or []) if i.get("type") == "doi"), "")
+        link = next((l.get("url", "") for l in (b.get("link") or []) if l.get("type") == "fulltext"), "")
+        jr = b.get("journal") or {}
+        text = (
+            f"# {title}\n\n"
+            f"作者: {'; '.join(a.get('name', '') for a in (b.get('author') or []) if a.get('name'))}\n"
+            f"期刊: {jr.get('title') or ''} {str(jr.get('volume') or '')}"
+            f"{'(' + str(jr.get('number') or '') + ')' if jr.get('number') else ''}"
+            f" {str(b.get('year') or '')}\n"
+            f"DOI: {doi}\n链接: {link or (f'https://doi.org/{doi}' if doi else '')}\n\n"
+            f"{b.get('abstract') or ''}"
+        ).strip()
+        return text if len(text) > 100 else None
+
+    return await anyio.to_thread.run_sync(_f)
+
+
 READERS = {
     "arxiv": read_arxiv,
     "semantic": read_semantic,
@@ -257,4 +343,7 @@ READERS = {
     "iacr": read_iacr,
     "crossref": read_crossref,
     "openalex": read_openalex,
+    "biorxiv": read_biorxiv,
+    "medrxiv": read_medrxiv,
+    "doaj": read_doaj,
 }
