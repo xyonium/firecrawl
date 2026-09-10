@@ -92,6 +92,52 @@ def test_search_ieee_without_key_returns_empty():
     assert r.json()["papers"] == []
 
 
+# --- 聚合 search_papers（OWUI tool 安全网消费的形状）------------------------------
+
+
+def test_search_papers_aggregate(monkeypatch):
+    _patch_search(monkeypatch, "_arxiv_search", result=_SAMPLE)
+    _patch_search(monkeypatch, "_dblp_search",
+                  result={**_SAMPLE, "paper_id": "dblp/conf/x", "source": "dblp"})
+    r = client.post("/papers/search_papers", json={
+        "query": "gnn", "sources": "arxiv,dblp", "max_results_per_source": 3,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source_results"] == {"arxiv": 1, "dblp": 1}
+    assert body["errors"] == {}
+    assert len(body["papers"]) == 2
+
+
+def test_search_papers_aggregate_isolates_errors(monkeypatch):
+    _patch_search(monkeypatch, "_arxiv_search", exc=RuntimeError("boom"))
+    _patch_search(monkeypatch, "_openalex_search",
+                  result={**_SAMPLE, "paper_id": "W123", "source": "openalex"})
+    r = client.post("/papers/search_papers", json={
+        "query": "gnn", "sources": "arxiv,openalex",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert "boom" in body["errors"]["arxiv"]
+    assert body["source_results"]["arxiv"] == 0  # 失败源计 0，错误进 errors
+    assert body["source_results"]["openalex"] == 1
+    assert len(body["papers"]) == 1
+
+
+def test_search_papers_unknown_source_skipped(monkeypatch):
+    _patch_search(monkeypatch, "_arxiv_search", result=_SAMPLE)
+    r = client.post("/papers/search_papers", json={
+        "query": "gnn", "sources": "arxiv,ssrn,acm",  # 后两个未实现 → 跳过
+    })
+    assert r.status_code == 200
+    assert r.json()["source_results"] == {"arxiv": 1}
+
+
+def test_search_papers_query_required():
+    r = client.post("/papers/search_papers", json={"sources": "arxiv"})
+    assert r.status_code == 400
+
+
 # --- google_scholar 链 ----------------------------------------------------------
 
 

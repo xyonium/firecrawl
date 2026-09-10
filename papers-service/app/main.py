@@ -67,6 +67,44 @@ async def papers_tool(tool: str, request: Request):
             return JSONResponse({"detail": f"doi not found: {doi}"}, status_code=404)
         return item  # shim: data.get("result") or data —— 裸 dict 即可
 
+    if tool == "search_papers":
+        # 聚合端点（mcpo/paper-search-mcp 形状）：一次请求多源并发，按源隔离错误。
+        # OWUI tool.py 的安全网分支消费 {papers, source_results, errors}；
+        # research-proxy 不用这个（它只调单源 search_{source}）。
+        query = str(body.get("query") or "").strip()
+        if not query:
+            return JSONResponse({"detail": "query required"}, status_code=400)
+        sources_raw = str(body.get("sources") or "").strip()
+        try:
+            limit = max(1, min(int(body.get("max_results_per_source") or 5), 50))
+        except (TypeError, ValueError):
+            limit = 5
+        if sources_raw.lower() == "all":
+            names = sorted(toolwrap.SEARCH_DISPATCH)
+        else:
+            names = [s.strip() for s in sources_raw.split(",") if s.strip()]
+        names = [s for s in dict.fromkeys(names) if s in toolwrap.SEARCH_DISPATCH]
+        if not names:
+            return JSONResponse({"detail": "no valid sources"}, status_code=400)
+
+        async def _one(name: str):
+            try:
+                return name, await asyncio.wait_for(
+                    toolwrap.search(name, query, limit), timeout=16
+                ), None
+            except Exception as e:
+                return name, [], str(e)
+
+        results = await asyncio.gather(*(_one(n) for n in names))
+        papers, source_results, errors = [], {}, {}
+        for name, hits, err in results:
+            source_results[name] = len(hits)
+            if err:
+                errors[name] = str(err)[:300]
+            else:
+                papers.extend(hits)
+        return {"papers": papers, "source_results": source_results, "errors": errors}
+
     if tool == "download_with_fallback":
         source = str(body.get("source") or "")
         paper_id = str(body.get("paper_id") or "")
